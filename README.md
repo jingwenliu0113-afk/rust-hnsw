@@ -9,7 +9,19 @@
   Python binding skeleton、固定的 Python batch interface。
 - Core / Week 1 進行中：HNSW insert / search、save / load、Python binding 與 efSearch 介面、
   hnswlib / FAISS adapters、benchmark runner（smoke 已驗證）已完成。
-- 尚未有正式 benchmark 結果。資料集已決定（decision 011），準備流程與文字 workload 的 pilot 進行中（見 `NEXT.md`）。
+- 資料集已登記：`glove-100-angular`（frozen ground truth n = 100k / 300k / 1,183,514）與文字 pilot；
+  正式文字 workload（`simplewiki-embeddinggemma2-100k`，decision 012）產生中。
+- **真實資料上的 correctness 已通過**（SPEC Core 3；smoke 模式，計時不作任何結論）：三個實作的 Recall@10 都隨 efSearch 單調上升，
+  沒有系統性惡化，也沒有結果不足 k。
+
+  | 資料集 | n | M / efC | Recall@10（ef = 10 → 64 → 256；三者相近） |
+  | --- | --- | --- | --- |
+  | glove-100-angular | 100,000 | 16 / 200 | 約 0.55 → 0.83 → 0.95 |
+  | glove-100-angular | 1,183,514 | 16 / 200 | ef = 64 → 256 → 1024：約 0.76 → 0.88 → 0.955 |
+  | 文字 pilot（768 維） | 10,000 | 16 / 200 | 約 0.79 → 0.98 → 0.999 |
+
+  完整 GloVe 上，ann-benchmarks 自帶的 neighbors 與本專案以 exact search 產生的 ground truth 完全一致。
+- 尚未有正式 benchmark 結果：正式格點（decision 013）設計中；formal run 需要 Mac heavy lock 與閒置的機器（見 `NEXT.md`）。
 
 ## 目錄
 
@@ -17,7 +29,8 @@
 crates/hnsw/        Rust 實作（distance、exact search、HNSW、save / load）
 python/             PyO3 binding，Python module 名稱 `rust_hnsw`
 benchmarks/         統一 batch interface、adapters、Recall 指標、benchmark runner（run.py）、報告（report.py）
-benchmarks/configs/ runner 的 TOML config（目前只有 smoke）
+benchmarks/configs/ runner 的 TOML config（smoke、真實資料的 correctness、成本探測）
+benchmarks/manifests/ 資料集的 manifest（來源、checksum、切分、frozen ground truth）
 tests/              Python 測試（binding、adapters、第三方原生語意、interface、metrics）
 scripts/test.sh     一鍵跑全部 correctness 檢查
 scripts/profile.sh  以 macOS `sample` 對 build / search 取樣（decision 009）
@@ -55,7 +68,27 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 ./tools/with-mac-lock .venv/bin/python -m benchmarks.run <formal config> --mode formal
 ```
 
-輸出在 `results/runs/<UTC 時間>-<mode>/`（不進版控）。formal 需要已登記的真實資料集，目前還沒有。
+輸出在 `results/runs/<UTC 時間>-<mode>/`（不進版控）。formal 只接受已登記的真實資料集。
+
+第一次 formal run 之前，先在 lock 下量閒置 load（008 §2；其他 process 有重工作時判為 `not_idle`）：
+
+```bash
+./tools/with-mac-lock .venv/bin/python -m benchmarks.idle_load
+```
+
+真實資料上的 correctness run（smoke，只看 recall 隨 efSearch 的變化）：
+
+```bash
+.venv/bin/python -m benchmarks.run benchmarks/configs/glove-correctness.toml --mode smoke
+.venv/bin/python -m benchmarks.run benchmarks/configs/text-pilot-correctness.toml --mode smoke
+```
+
+Gate 用的 profiling（009；正式資料集、lock 下，取樣前寫出參數、git、編譯資訊與 Recall@10）：
+
+```bash
+./tools/with-mac-lock ./scripts/profile.sh <名稱> 20 -- --impl rust-hnsw --phase search \
+    --dataset glove-100-angular --n 100000 --m 16 --ef-construction 200 --seed 1 --ef 128 --k 10
+```
 
 ## 資料集（decision 011）
 
@@ -69,6 +102,9 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 uv venv --python 3.13 .venv-embed
 uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
 .venv/bin/python -m benchmarks.prepare_text --name simplewiki-embeddinggemma2-pilot --n-base 10000 --n-queries 1000
+# 正式文字 workload（decision 012）
+.venv/bin/python -m benchmarks.prepare_text --name simplewiki-embeddinggemma2-100k --n-base 100000 --n-queries 2000 \
+    --gt-n 10000 --gt-n 30000 --gt-n 100000
 ```
 
 報告（依 decision 010 的比較規則：frontier 讀值、variance、scaling、recall vs efSearch 圖）：
@@ -90,3 +126,4 @@ uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
 - [009 profiling 方法（Gate 證據的產生方式）](docs/decisions/009-profiling-method.md)
 - [010 比較規則與 variance 彙整（事先登記）](docs/decisions/010-comparison-rules.md)
 - [011 資料集：glove-100-angular 與 EmbeddingGemma 2 文字 workload](docs/decisions/011-datasets.md)
+- [012 正式文字 workload 的規模](docs/decisions/012-text-workload-scale.md)

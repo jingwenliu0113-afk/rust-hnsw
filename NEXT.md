@@ -57,7 +57,8 @@
 - `793edc9 feat(benchmarks): profile registered datasets and record the profiling context`
 - `693ba51 chore(benchmarks): rerun the full-size half of the GloVe cost probe`
 - `ddf0fd1 docs: record the reusable-page bias in index memory as a blocked decision`
-- `feat(benchmarks): add the idle-load baseline measurement required before formal runs`（本次）
+- `04a68d8 feat(benchmarks): add the idle-load baseline measurement required before formal runs`
+- `docs: update README with real-data correctness and the new tools`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
