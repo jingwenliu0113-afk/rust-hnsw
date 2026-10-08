@@ -54,6 +54,18 @@ Core 不需要 RTX 5070 Ti。
 
 記錄 machine / CPU / RAM / OS / power state / background load / compiler / git commit / config。
 
+## Docker
+
+目前 Core 階段，本 Project **不使用** Mac 上的 Docker Desktop。
+
+禁止：
+
+- 執行 Docker Desktop restart。
+- 執行任何全域 prune（例如 `docker system prune`、`docker volume prune`、`docker network prune`、`docker image prune`）。
+- 操作其他 Project 的 container、volume 或 network（啟動、停止、刪除、修改都不行）。
+
+若未來真的出現 Docker 的必要性：先停下來向使用者提出理由，經同意後才能導入；不得自行導入。
+
 ## 遠端桌機
 
 只有使用者明確要求 x86 vs ARM secondary experiment 時才使用。
