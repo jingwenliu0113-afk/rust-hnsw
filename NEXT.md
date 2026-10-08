@@ -31,7 +31,9 @@
 
 - 自主推進 Core：完成一項 → 測試 → 更新 decision log / NEXT → 乾淨的 commit → push → 直接進下一項。
 - `origin` = GitHub Private repo（使用者建立）。測試通過的乾淨 commit 可直接 push；禁止 force push、改寫 history、改 visibility。
-- 只在真正的 blocker 才停下來問，例如：大型資料或模型下載、credential、費用、改變已凍結的 protocol 或 metric。
+- （2026-10-09 使用者離開前指示）需要使用者的事項（決策、下載 / 費用批准、API key、credential、sudo、人工標註、修改 frozen protocol、
+  進入 Advanced / Optional）**不等待**：記到下方「Blocked / 需要使用者」後跳過，改做其他 Core 工作。heavy lock 被占用、機器負載過高時也一樣。
+  不得為了繼續而放寬門檻、改 metric / split / frozen protocol、產生付費用量或使用 credential。只有在所有可做的 Core 工作都完成或全部 blocked 時才停下。
 
 ## Commits
 
@@ -53,7 +55,8 @@
 - `3882eca feat(datasets): register the EmbeddingGemma 2 text pilot`
 - `1bf8545 docs: decide the formal text workload scale and add the GloVe cost probe`
 - `793edc9 feat(benchmarks): profile registered datasets and record the profiling context`
-- `chore(benchmarks): rerun the full-size half of the GloVe cost probe`（本次）
+- `693ba51 chore(benchmarks): rerun the full-size half of the GloVe cost probe`
+- `docs: record the reusable-page bias in index memory as a blocked decision`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -128,7 +131,23 @@
 
 ## Blocked / 需要使用者決定
 
-- 目前沒有需要使用者決定的事項。資料集已於 2026-10-08 決定（見「目前位置」）。
+### B1. index memory 的量測定義（修改凍結的 008 §8，需要你決定；不擋正式 run）
+
+- **問題**：008 §8 規定 `index_memory_bytes` = build 後的 rss − baseline rss，recall–memory frontier 一律用它。
+  macOS 上，釋放的大型配置會以 reusable page 留在 rss 裡（不算 phys_footprint），直到系統有記憶體壓力才回收；正式 run 要求機器閒置，這些 page 最不會被回收。
+- **證據**（`scripts/probe_reusable_memory.py`，2026-10-09 兩次實測）：釋放 451 MiB 的暫時副本後 Δrss ≈ +451–470 MiB、Δfootprint ≈ 0–14 MiB；
+  呼叫 `malloc_zone_pressure_relief` 後 Δrss 回到約 0–19 MiB。numpy 的對照組結果相同，所以是 allocator 的普遍行為，不是 Rust 特有。
+- **對結果的影響**：Rust 的 `HnswIndex.add` 為了「任一列不合法就整批不插入」先建立一份完整的正規化副本（`unit_rows`），add 結束時釋放。
+  完整 GloVe（1,183,514）的 smoke 探測中，Rust 的 rss 增量 1,186 MiB、footprint 增量 738 MiB，差 448 MiB ≈ 一份資料；n = 100k 時沒有出現差距。
+  照現行定義，Rust 在大 n 的 recall–memory frontier 會被多算約一份資料。現有的 `memory` 標記只抓 rss **低估**（壓縮），抓不到這種**高估**。
+- **選項**：
+  1. （建議）`index_memory_bytes` 改用 phys_footprint 的增量（含被壓縮的 page、不含 reusable page）；rss 增量保留為輔助欄位。
+  2. 量 baseline 與 after_build 之前先呼叫 `malloc_zone_pressure_relief`，繼續用 rss（會改變被量測時 allocator 的狀態，但對三者對稱）。
+  3. 維持現狀，在報告中註明 Rust 在大 n 時被多算。
+- **為什麼不擋正式 run**：run.json 本來就同時記錄 rss（`index_memory_bytes`）與 footprint（`index_footprint_bytes`），
+  這個決定只影響報告的 memory frontier 採用哪個欄位；但必須在看到正式結果**之前**決定，否則會變成看結果選指標。
+  若正式 run 在你決定之前完成：報告的 memory 讀值兩種都列（rss 與 footprint），選擇的依據只能是上面這份與正式結果無關的證據。
+- **另外的觀察（不是量測問題）**：同一份暫時副本讓 Rust build 期間的 peak RSS 多出一份資料（真實的實作特性，照實報告）；可能是 Advanced A 的假設之一，Core 不改。
 
 ## 需要留意
 
