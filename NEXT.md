@@ -63,14 +63,24 @@
 1. **runner 的獨立審查**（背景 workflow 執行中）：以 mutation 檢查測試鑑別力，並逐條對照 008 / 010；修正後另一個 commit。
 2. （已完成）分析 / 報告腳本。
 3. **閒置 load 的量測**（008 §2）：在沒有 lock holder、沒有其他重工作時量 10 分鐘，確認 4.0 的門檻；不符就另寫 decision log。
+   - 2026-10-08 19:00 前後嘗試：incident-investigator 持有 heavy lock（soak），text-to-sql、agent-gym 各有 100% CPU 的 process，1 分鐘 load 約 7.8–8.2，無法量閒置基準。暫時 blocked，之後再試（只影響 formal run，不影響其他 Core 工作）。
 4. **第一個真實資料集**（需要使用者決定，見 Blocked）：決定後寫資料集 decision（來源、授權、SHA-256、子集規則），登記到 `benchmarks/datasets.py`。
 5. **第一張 recall vs efSearch 圖與正式 run**（formal config 先 commit，依 010 列出 variance 格點）。
 6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
 
 ## Blocked / 需要使用者決定
 
-- **資料集下載**（尚未提出）：SPEC 需要「標準 ANN 真實資料集」與「真實文本的現代 embedding」。
-  兩者都需要下載資料（數百 MB）或 embedding 模型，依使用者規則要先詢問。分析腳本完成後一次提出具體方案。
+- **資料集下載**（2026-10-08 已向使用者提出，等待決定）：SPEC 需要「標準 ANN 真實資料集」與「真實文本的現代 embedding」。
+  - 標準 ANN（ann-benchmarks 的 HDF5，repo 為 MIT；讀取需要小套件 `h5py`）：
+    - **glove-100-angular（建議）**：1,183,514 × 100、10k queries、463 MB；GloVe 為 PDDL v1.0。經典 angular 資料集，n 夠大，可以做巢狀子集的 scaling。
+    - nytimes-256-angular：290,000 × 256、10k queries、301 MB；維度較高、n 較小。
+    - glove-25-angular：121 MB，下載最小但只有 25 維。
+  - 真實文本 embedding：
+    - **KShivendu/dbpedia-entities-openai-1M（建議）**：MIT、OpenAI text-embedding-ada-002、1536 維、26 個 parquet（每個約 366 MB，共 9.5 GB）。
+      只下載前 3 個 shard（約 1.1 GB、約 11.5 萬筆）；沒有 query split，要以固定 seed 保留 1 萬筆作 queries 並從 train 排除（屬於資料切分，寫進資料集 decision）。讀取需要 `pyarrow`。
+    - Qdrant/dbpedia-entities-openai3-text-embedding-3-small-1024-100K：模型較新（text-embedding-3-small，1024 維）、662 MB，但資料集頁面沒有標示授權。
+    - 本機以開源模型自行產生（例如 bge-small-en-v1.5）：要安裝 PyTorch / sentence-transformers（約 1 GB）並多一個模型選擇的決策。
+  - 決定後：寫資料集 decision（來源、授權、SHA-256、子集與 query 規則）→ 轉成 `.npy` 並登記到 `benchmarks/datasets.py` → formal config。
 
 ## 需要留意
 
