@@ -81,6 +81,8 @@ def main(argv=None) -> int:
     parser.add_argument("--download", action="store_true", help="原始檔不存在時從 ann-benchmarks 下載")
     args = parser.parse_args(argv)
 
+    # 在開始時記錄：準備要跑很久，期間 repo 若有變動，結束時的 git 狀態就不是實際執行的程式。
+    prepared_with = dataprep.prepared_with("benchmarks/prepare_glove.py", ["numpy", "h5py"])
     directory = dataprep.DATASETS_DIR / NAME
     raw = directory / "raw" / RAW_NAME
     if not raw.exists():
@@ -108,7 +110,7 @@ def main(argv=None) -> int:
         manifest["ground_truth"]["files"][str(n)] = f"gt_n{n}.npy"
     for name in ["train.npy", "queries.npy", "neighbors.npy", *manifest["ground_truth"]["files"].values()]:
         manifest["files"][name] = dataprep.file_record(directory / name)
-    manifest["prepared_with"] = dataprep.prepared_with("benchmarks/prepare_glove.py", ["numpy", "h5py"])
+    manifest["prepared_with"] = prepared_with
     dataprep.write_manifest(manifest, manifest_path)
     print(manifest_path)
     return 0

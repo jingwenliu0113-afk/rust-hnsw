@@ -50,6 +50,9 @@ def write_passages(path: Path, passages) -> None:
 
 def prepare(name: str, raw: Path, n_base: int, n_queries: int, gt_n, embed_command=default_embed_command,
             datasets_dir=dataprep.DATASETS_DIR, manifest_dir=dataprep.MANIFEST_DIR, corpus=CORPUS) -> Path:
+    # 在開始時記錄：準備要跑很久，期間 repo 若有變動，結束時的 git 狀態就不是實際執行的程式。
+    prepared_with = {**dataprep.prepared_with("benchmarks/prepare_text.py", ["numpy", "pyarrow"]),
+                     "unicodedata": unicodedata.unidata_version}
     digest = dataprep.sha256_file(raw)
     if digest != corpus["sha256"]:
         raise ValueError(f"{raw}: SHA-256 {digest} does not match the pinned corpus {corpus['sha256']}")
@@ -97,9 +100,8 @@ def prepare(name: str, raw: Path, n_base: int, n_queries: int, gt_n, embed_comma
         "subset_rule": "first n rows of train.npy (base passages in salted-SHA-256 article order)",
         "ground_truth": {"k": dataprep.GT_K, "n": sorted(int(n) for n in gt_files), "files": gt_files},
         "files": {name_: dataprep.file_record(directory / name_) for name_ in files},
-        # NFC 與空白的定義取決於 Python 內建的 Unicode 資料庫，所以一併記錄它的版本。
-        "prepared_with": {**dataprep.prepared_with("benchmarks/prepare_text.py", ["numpy", "pyarrow"]),
-                          "unicodedata": unicodedata.unidata_version},
+        # NFC 與空白的定義取決於 Python 內建的 Unicode 資料庫，所以一併記錄它的版本（unicodedata）。
+        "prepared_with": prepared_with,
     }
     path = Path(manifest_dir) / f"{name}.json"
     dataprep.write_manifest(manifest, path)
