@@ -1,0 +1,23 @@
+# 正式 run（decision 013）：文字 n = 100,000。
+# 第一個 sweep：(16, 200) 的 seeds 2–5（原始順序），與 text-formal-1-m16-order.toml 合起來是完整 variance 格點；shuffles 必須為空。
+# 第二個 sweep：efC 掃描的 (16, 400)，seed 1。兩者共用 (16, 200) 的 ef 清單（013 §2）。
+# 本檔與 simplewiki-embeddinggemma2-100k 的 manifest 同一個 commit 加入，內容與 013 附錄逐字相同（child_timeout_s 只能依 013 §6 上調）。
+schema_version = 1
+dataset = "simplewiki-embeddinggemma2-100k"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [24, 32, 48, 64, 96, 128, 192, 256, 384, 512]
+child_timeout_s = 4800
+
+[[sweep]]
+n = [100000]
+m = [16]
+ef_construction = [200]
+seeds = [2, 3, 4, 5]
+shuffles = []
+
+[[sweep]]
+n = [100000]
+m = [16]
+ef_construction = [400]
+seeds = [1]
+shuffles = []

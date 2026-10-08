@@ -1,0 +1,23 @@
+# 正式 run（decision 013）：文字。
+# 第一個 sweep：n = 100,000 的 M 掃描 (32, 200)、(48, 200)，seed 1。
+# 第二個 sweep：scaling 的 n = 10,000、30,000，固定 (16, 200)，seed 1。全部共用一份 ef 清單（013 §2）。
+# 本檔與 simplewiki-embeddinggemma2-100k 的 manifest 同一個 commit 加入，內容與 013 附錄逐字相同（child_timeout_s 只能依 013 §6 上調）。
+schema_version = 1
+dataset = "simplewiki-embeddinggemma2-100k"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [10, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384]
+child_timeout_s = 7800
+
+[[sweep]]
+n = [100000]
+m = [32, 48]
+ef_construction = [200]
+seeds = [1]
+shuffles = []
+
+[[sweep]]
+n = [10000, 30000]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = []

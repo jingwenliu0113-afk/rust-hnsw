@@ -24,7 +24,8 @@
     n = 1,183,514 只完成 hnswlib 的 build。後半段以 `glove-cost-probe-full.toml` 重跑。
   - 100k 文字資料集在 embedding 階段中斷（只寫出 jsonl），從頭重跑（embedding 與批次組成無關，重跑結果應逐位元相同於未中斷的版本）。
   - 中斷前機器的 15 分鐘 load 約 69、swap 使用約 2.6 GB（主要是其他專案的模擬器與虛擬機器）。
-- 進行中：產生 100k 文字資料集（背景，約 3 小時）；GloVe 完整大小的成本探測（smoke），作為正式格點 decision 的依據。
+- **`simplewiki-embeddinggemma2-100k` 已登記**（012 補記）：前 1,000 個 query 與 pilot 逐位元相同；correctness smoke 通過（ef 192 約 0.993）。
+  文字 4 份 formal config 已 commit（timeout 依 013 §6 檢查後不需上調）。**12 份 formal config 全部已 commit。**
 
 尚未進 Advanced（Gate 條件都還沒有資料可判斷），沒有做任何 Optional。
 
@@ -66,7 +67,9 @@
 - `746c1d0 docs: pre-register the formal grid (decision 013) and add the GloVe formal configs`
 - `fbe7f40 feat(benchmarks): add the pre-merge checks and auxiliary scaling reading required by 013`
 - `7580224 docs: add the formal-run runbook to NEXT`
-- `fix(benchmarks): close gate-tool gaps found in review`（本次）
+- `89b5f09 fix(benchmarks): close gate-tool gaps found in review`
+- `e0529a0 docs: defer the idle-load baseline until the formal power conditions are decided`
+- `feat(datasets): register the formal text workload and its formal configs`（本次）
 
 ## 最近完成：gate 工具的審查（008 / 009 / 010 / 013 補記）
 
@@ -144,7 +147,7 @@
    - pilot 已登記（manifest 與 `text-pilot-correctness.toml` 同一個 commit）：base 10,000、query 1,000、frozen ground truth n = 10,000；
      batch size 1 下 base 約 1,124 秒、query 約 108 秒（機器 load 約 9–12，約 9 筆/秒），token 數最多 386、平均約 98，去重移除 6 段。
    - （已完成）兩個資料集上的 correctness run 與第一張 recall vs efSearch 圖（見「目前位置」）。
-   - （已完成）decision 012：正式文字 workload 的規模。進行中：產生 `simplewiki-embeddinggemma2-100k`，完成後與它的 manifest 一起 commit。
+   - （已完成）decision 012：正式文字 workload 的規模；`simplewiki-embeddinggemma2-100k` 已產生並登記（012 補記）。
 5. **正式格點（decision 013，已採用）**：
    - 以三個獨立設計（成本最小、統計穩健、涵蓋最廣）加三位評審（合規、成本、完整性）定稿；三位評審都以「成本最小」為基礎，
      再移植 M8、GloVe (48, 200) 的 5-seed variance、1,183,514 加 768 / 1218 / 1536、文字 M16 上界 512 等。
@@ -153,7 +156,7 @@
    - **第一次 formal run 之前還必須完成**：
      - （已完成，013 補記）`report.py` 的四項檢查：拒絕跨 run 重複的 build、拒絕 aborted / invalid / error 的 run（以 `--excluded` 列出）、
        合併前的版本一致檢查、輔助的 (16, 200)-only scaling 讀值。
-     - （可以自己做）文字 4 份 config 的 commit（等 manifest）。
+     - （已完成）文字 4 份 config 的 commit（與 manifest 同一個 commit）。
      - （Deferred / Blocked）閒置 load 量測、B1、B2、使用者解除今晚的限制。
    - **正式 run 的執行手冊**（使用者解除限制、B1 / B2 決定、閒置 load 量測通過之後；每一步都在 repo root）：
      1. `export DEVELOPER_DIR=/Library/Developer/CommandLineTools`（B3 未修好之前）。

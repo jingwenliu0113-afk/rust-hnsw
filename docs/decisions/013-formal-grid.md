@@ -310,6 +310,14 @@
   必須完全相同。原本只比對名稱，同名資料集在兩次 formal run 之間重新準備時會被合併。
 - **輔助 scaling 讀值**：「排除標記點是否改變讀值」只比較 QPS / P50 / P95 的數值與所在的點（§4 的定義）；改變時另列包含被標記點的讀值（010 §3）。
 
+## 補記（2026-10-09，文字資料集登記，在任何正式結果之前）
+
+- `simplewiki-embeddinggemma2-100k` 已登記；文字 4 份 config 與 manifest 同一個 commit 加入，內容與附錄逐字相同（已以程式比對）。
+- §6 的 timeout 檢查：文字 100k 的 correctness smoke（`text-correctness.toml`，(16, 200)、ef 10–512，load 約 2，
+  `results/runs/20261008T183825Z-smoke`）實測 × 1.25 後，build 為模型的 0.78 倍、ef 點合計為模型的 0.77 倍；
+  模型偏保守，依規則不上調，4 份的 child_timeout_s 維持附錄的值。格點、ef、seed、shuffle 都沒有改。
+- 同一個 smoke 的 recall 只用來確認 correctness（三個實作都隨 ef 單調上升，ef 192 約 0.993），不回頭影響格點（§「為什麼」）。
+
 ## 附錄：文字的 formal config（逐字登記）
 
 與 `simplewiki-embeddinggemma2-100k` 的 manifest 同一個 commit 加入 `benchmarks/configs/`，內容必須與以下完全相同（唯一例外：依第 6 點上調的 `child_timeout_s`）。

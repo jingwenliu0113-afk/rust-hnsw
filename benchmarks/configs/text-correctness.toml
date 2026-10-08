@@ -1,0 +1,15 @@
+# 正式文字資料集 simplewiki-embeddinggemma2-100k 的 correctness run（smoke 模式；SPEC Core 3）：recall 隨 efSearch 的變化與整條流程。
+# 計時不在 lock 下量測，不得用於任何效能結論（decision 008 §1）。依 decision 013 §6，它的耗時只能用來上調文字 formal config 的
+# child_timeout_s，不得改格點、ef、seed 或 shuffle。
+schema_version = 1
+dataset = "simplewiki-embeddinggemma2-100k"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [10, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512]
+child_timeout_s = 7200
+
+[[sweep]]
+n = [100000]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = []

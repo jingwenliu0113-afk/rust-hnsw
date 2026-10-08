@@ -55,3 +55,14 @@ pilot（`simplewiki-embeddinggemma2-pilot`，base 10,000、query 1,000）的流�
 - 正式文字 workload 的結論只代表「Simple English Wikipedia 的 passage、EmbeddingGemma 2 的 768 維 document embedding、held-out 文件查詢」（011）。
 - pilot 資料集保留在 registry，只用於 correctness 與流程驗證，不進入正式比較。
 - 正式格點（M、efC、ef、variance）另寫 decision。
+
+## 補記（2026-10-09）：產生結果
+
+- 依本文件產生並登記（manifest 在 `benchmarks/manifests/simplewiki-embeddinggemma2-100k.json`）：base 100,000、query 2,000、
+  frozen ground truth n = 10,000 / 30,000 / 100,000；完全相同的文字移除 112 段；token 數最多 449、平均約 98。
+- embedding：base 約 10,333 秒、query 約 170 秒（batch size 1、fp32、CPU；期間機器 load 約 4–9）。兩個 job 的逐位元重現檢查都通過。
+- **前綴穩定已實測**：本資料集的前 1,000 個 query 向量與 pilot 的 1,000 個 query 向量**逐位元相同**，passage id 也相同；
+  證實 embedding 與批次組成、job 大小無關（011 補記）。
+- correctness smoke（`text-correctness.toml`，n = 100,000、(16, 200)）：三個實作的 Recall@10 都隨 ef 單調上升，
+  ef 10 約 0.77、ef 64 約 0.97、ef 192 約 0.993、ef 512 約 0.999；沒有結果不足 k、沒有重跑不一致。計時是 smoke，不作效能結論。
+- 中途一次被 session 結束中斷（只寫出 jsonl），從頭重跑。

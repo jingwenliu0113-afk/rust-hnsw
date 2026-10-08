@@ -9,8 +9,8 @@
   Python binding skeleton、固定的 Python batch interface。
 - Core / Week 1 進行中：HNSW insert / search、save / load、Python binding 與 efSearch 介面、
   hnswlib / FAISS adapters、benchmark runner（smoke 已驗證）已完成。
-- 資料集已登記：`glove-100-angular`（frozen ground truth n = 100k / 300k / 1,183,514）與文字 pilot；
-  正式文字 workload（`simplewiki-embeddinggemma2-100k`，decision 012）產生中。
+- 資料集已登記：`glove-100-angular`（frozen ground truth n = 100k / 300k / 1,183,514）、
+  正式文字 workload `simplewiki-embeddinggemma2-100k`（decision 012；n = 10k / 30k / 100k）與文字 pilot。
 - **真實資料上的 correctness 已通過**（SPEC Core 3；smoke 模式，計時不作任何結論）：三個實作的 Recall@10 都隨 efSearch 單調上升，
   沒有系統性惡化，也沒有結果不足 k。
 
@@ -19,9 +19,10 @@
   | glove-100-angular | 100,000 | 16 / 200 | 約 0.55 → 0.83 → 0.95 |
   | glove-100-angular | 1,183,514 | 16 / 200 | ef = 64 → 256 → 1024：約 0.76 → 0.88 → 0.955 |
   | 文字 pilot（768 維） | 10,000 | 16 / 200 | 約 0.79 → 0.98 → 0.999 |
+  | 文字（768 維，正式資料集） | 100,000 | 16 / 200 | 約 0.77 → 0.97 → 0.996 |
 
   完整 GloVe 上，ann-benchmarks 自帶的 neighbors 與本專案以 exact search 產生的 ground truth 完全一致。
-- 尚未有正式 benchmark 結果：正式格點已事先登記（decision 013，12 份 config）；formal run 需要 Mac heavy lock 與閒置的機器（見 `NEXT.md`）。
+- 尚未有正式 benchmark 結果：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；formal run 需要 Mac heavy lock 與閒置的機器（見 `NEXT.md`）。
 
 ## 目錄
 

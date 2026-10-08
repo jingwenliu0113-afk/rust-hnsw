@@ -1,0 +1,187 @@
+{
+  "name": "simplewiki-embeddinggemma2-100k",
+  "kind": "npy",
+  "metric": "angular",
+  "decision": "docs/decisions/011-datasets.md",
+  "directory": "datasets/simplewiki-embeddinggemma2-100k",
+  "train": "train.npy",
+  "queries": "queries.npy",
+  "neighbors": null,
+  "source": {
+    "dataset": "wikimedia/wikipedia",
+    "config": "20231101.simple",
+    "revision": "b04c8d1ceb2f5cd4588862100d08de323dccfbaa",
+    "file": "20231101.simple/train-00000-of-00001.parquet",
+    "sha256": "31bded16768a47c286becd292079122f5d7d4397a17b87d4250a00ccd581e6f0",
+    "bytes": 156885218,
+    "license": "CC BY-SA 3.0 and GFDL",
+    "raw_file": "datasets/simplewiki/raw/train-00000-of-00001.parquet"
+  },
+  "preprocessing": {
+    "paragraphs": "split on newline, NFC, collapse whitespace, truncate at the last space within max_chars, then keep >= min_chars",
+    "min_chars": 200,
+    "max_chars": 1000,
+    "input_format": "title: {title} | text: {passage}"
+  },
+  "split": {
+    "rule": "articles ordered by sha256(key_prefix + article id); queries = first passage of the first n_queries articles; base = all passages of the remaining articles in order, first n_base; identical passage texts kept once (earliest article in that order)",
+    "key_prefix": "rust-hnsw-text-v1:",
+    "min_chars": 200,
+    "max_chars": 1000,
+    "n_base": 100000,
+    "n_queries": 2000,
+    "articles_seen": 241787,
+    "duplicates_removed": 112,
+    "base_ids_sha256": "d90c0728ea281efc7eb6feb8fc833f1983fb082b7716a5eb93dd7fe2184eece4",
+    "query_ids_sha256": "868d3407dabb53a447b169851d3313dbabf33aa0ac51702fecede945cecba66e"
+  },
+  "embedding": {
+    "model": "google/embeddinggemma-2",
+    "revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
+    "model_file_sha256": "197a32965d4b1105faf060417baa899e193fb73cd401f42ec9295234d5553d79",
+    "dim": 768,
+    "dtype": "float32",
+    "device": "cpu",
+    "threads": 8,
+    "seed": 0,
+    "batch_size": 1,
+    "padding": "none (one text per forward pass)",
+    "deterministic_algorithms": true,
+    "normalization": "sentence-transformers Normalize, then f64 L2 normalization stored as float32",
+    "prompt": "none added by the library; inputs are 'title: {title} | text: {passage}'",
+    "max_seq_length": 1000000000000000019884624838656,
+    "versions": {
+      "python": "3.13.9",
+      "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+      "torch": "2.14.1",
+      "torchvision": "0.29.1",
+      "transformers": "5.19.0",
+      "sentence-transformers": "6.1.0",
+      "tokenizers": "0.23.2",
+      "safetensors": "0.8.0",
+      "huggingface-hub": "1.33.0",
+      "numpy": "2.5.3",
+      "pyarrow": "25.0.1",
+      "pillow": "12.3.0",
+      "pytest": "9.1.1"
+    },
+    "jobs": [
+      {
+        "input": "base.jsonl",
+        "output": "train.npy",
+        "count": 100000,
+        "max_tokens": 449,
+        "mean_tokens": 98.40948,
+        "seconds": 10333.323546886444,
+        "deterministic_sample": 32
+      },
+      {
+        "input": "queries.jsonl",
+        "output": "queries.npy",
+        "count": 2000,
+        "max_tokens": 284,
+        "mean_tokens": 93.6735,
+        "seconds": 169.55064415931702,
+        "deterministic_sample": 32
+      }
+    ],
+    "seconds_total": 10522.080950021744
+  },
+  "subset_rule": "first n rows of train.npy (base passages in salted-SHA-256 article order)",
+  "ground_truth": {
+    "k": 100,
+    "n": [
+      10000,
+      30000,
+      100000
+    ],
+    "files": {
+      "10000": "gt_n10000.npy",
+      "30000": "gt_n30000.npy",
+      "100000": "gt_n100000.npy"
+    }
+  },
+  "files": {
+    "train.npy": {
+      "sha256": "d5a411a6501fc01e699a31402d6a301185701d39757e1d1baf6e2a04f73de0a6",
+      "bytes": 307200128,
+      "shape": [
+        100000,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "queries.npy": {
+      "sha256": "cf72dc9cfe60e2c55bdde8765b99d9067298edf42e4742606ab246f8d7b641f2",
+      "bytes": 6144128,
+      "shape": [
+        2000,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "gt_n10000.npy": {
+      "sha256": "42555f1bb14fbfa95ab779f5c8ef9e2093f8d034f2c6bd02d4a8ebb022f07812",
+      "bytes": 1600128,
+      "shape": [
+        2000,
+        100
+      ],
+      "dtype": "int64"
+    },
+    "gt_n30000.npy": {
+      "sha256": "9dcc85d75bfd42216c333ce3c4829e757b940d743534d3638fcce4e8900aa0fb",
+      "bytes": 1600128,
+      "shape": [
+        2000,
+        100
+      ],
+      "dtype": "int64"
+    },
+    "gt_n100000.npy": {
+      "sha256": "c28f22ef7862094f5f042f02131988bdf2b6f8c8fd764c69341ae6a322706146",
+      "bytes": 1600128,
+      "shape": [
+        2000,
+        100
+      ],
+      "dtype": "int64"
+    },
+    "base.jsonl": {
+      "sha256": "4443c275bde1aaceb4798c8b08c1e083e8c500ca86abe26361fb80b550e7dcd3",
+      "bytes": 89370044
+    },
+    "queries.jsonl": {
+      "sha256": "ebf6043079e68fe84d3d4f90fc5850567d8276641eb3ea2d81d4aef1e72246a1",
+      "bytes": 1629626
+    },
+    "embedding.json": {
+      "sha256": "6bffb7ed9cba6a6551b5857266a5069f4ba7993fbabbd7873c86aeef74c8e6a6",
+      "bytes": 1517
+    }
+  },
+  "prepared_with": {
+    "script": "benchmarks/prepare_text.py",
+    "git": {
+      "commit": "693ba518754e889de43bc9b0f5e763de375c619e",
+      "status": [
+        "?? docs/decisions/013-formal-grid.md"
+      ]
+    },
+    "python": "3.13.9 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 19:11:29) [Clang 20.1.8 ]",
+    "versions": {
+      "numpy": "2.5.3",
+      "pyarrow": "25.0.1"
+    },
+    "rust_hnsw_build_info": {
+      "profile": "release",
+      "opt_level": "3",
+      "debug": "false",
+      "debug_assertions": false,
+      "rustflags": "-C link-arg=-undefined -C link-arg=dynamic_lookup",
+      "profile_env": "",
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)"
+    },
+    "unicodedata": "15.1.0"
+  }
+}
