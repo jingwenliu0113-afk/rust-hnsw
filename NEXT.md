@@ -137,16 +137,15 @@
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
    - 待正式 run 的結果出來後，依相近的 Recall@10 為各實作選 ef，在 heavy lock 下取樣。
 
-## Deferred（使用者 2026-10-09 約 01:00 指示，等使用者明確解除）
+## Deferred（使用者 2026-10-09 約 01:00 指示並更正範圍，等使用者明確解除）
 
 - 今晚 Mac 使用「自動」電力模式（pmset powermode 0）、只有 68W 供電（70W USB-C 變壓器，電池充電中）：
-  **暫停所有新的正式 Mac performance benchmark / heavy run**。開發、測試、資料準備、commit / push 照常。
+  **只暫停正式、performance-sensitive 的 Mac 實驗**；其他 heavy 工作（資料準備、embedding、smoke 探測、測試、開發）照常，commit / push 照常。
 - 因此 deferred（不等待，改做其他 Core 工作）：
-  - 閒置 load 量測（`benchmarks.idle_load`，在 heavy lock 下）。
   - 所有 formal run（GloVe 與文字的 formal config 會照常寫好並 commit，但不執行）。
-  - lock 下的 Gate profiling。
-  - 新的大型 smoke 成本探測（已有的探測資料足夠設計格點）。
-- 進行中、照常繼續：`simplewiki-embeddinggemma2-100k` 的 embedding（資料準備）。
+  - lock 下作為 Gate 證據的 profiling。
+- 閒置 load 量測（`benchmarks.idle_load`）本身不是效能量測，但它是 formal run 的前置條件，而且需要 heavy lock 空出來、沒有其他重工作：
+  目前 lock 由 llm-serving-lab 持有、本專案的 embedding 也在跑，所以照第 3 項的狀態繼續 blocked；條件具備時可以量（結果另外標註當時的電力狀態）。
 
 ## Blocked / 需要使用者決定
 
