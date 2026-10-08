@@ -93,8 +93,8 @@
    - 程式與測試已完成：GloVe 轉換、frozen ground truth（runner 以 SHA-256 加前 100 個 query 重算驗證後使用）、
      manifest 登記、文字 corpus 的前處理與切分（以文章為單位、加鹽 SHA-256 排序、完全相同的文字只留一份）、
      EmbeddingGemma 2 的 embedding（固定 revision、fp32、CPU、8 threads、拒絕 fp16、逐位元重現檢查）。
-   - glove-100-angular 已產生一次（舊 manifest 格式；當時 HEAD 4478926、`git diff HEAD` 為空，`-dirty` 只來自未追蹤的 config 與 manifests/）。
-     以新程式重跑，比對 SHA-256 確認可重現，再把 manifest 與 `glove-correctness.toml` 放在同一個 commit。
+   - glove-100-angular 已登記（manifest 與 `glove-correctness.toml` 同一個 commit）。以修正後的程式重跑一次，
+     train / queries / neighbors 與三個 frozen ground truth 共 6 個檔案的 SHA-256 與第一次完全相同（準備約 466 秒，peak RSS 約 3.1 GB）。
    - pilot 以修正後的程式重跑（batch size 1）；manifest 與 `text-pilot-correctness.toml` 放在同一個 commit。
    - 之後：在兩個資料集上跑 correctness 用的 smoke run（recall vs efSearch，不作效能結論）。
    - pilot 之後：另寫 decision 決定正式文字 workload 的規模（N 與登記的 n）。

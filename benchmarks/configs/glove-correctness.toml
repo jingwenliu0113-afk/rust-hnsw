@@ -1,0 +1,14 @@
+# 真實資料上的 correctness run（SPEC Core 3、Week 1 第 6、7 項）：以 smoke 模式執行，只用來檢查 recall 隨 efSearch 的變化
+# 與整條流程；計時數字不在 lock 下量測，不得用於任何效能結論（decision 008 §1）。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [10, 16, 24, 32, 48, 64, 96, 128, 192, 256]
+child_timeout_s = 7200
+
+[[sweep]]
+n = [100000]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = []

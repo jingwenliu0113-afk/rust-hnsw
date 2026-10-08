@@ -1,0 +1,118 @@
+{
+  "name": "glove-100-angular",
+  "kind": "npy",
+  "metric": "angular",
+  "decision": "docs/decisions/011-datasets.md",
+  "directory": "datasets/glove-100-angular",
+  "train": "train.npy",
+  "queries": "queries.npy",
+  "neighbors": "neighbors.npy",
+  "source": {
+    "url": "http://ann-benchmarks.com/glove-100-angular.hdf5",
+    "raw_file": "raw/glove-100-angular.hdf5",
+    "license": "GloVe vectors (glove.twitter.27B, 100d): Public Domain Dedication and License v1.0; ann-benchmarks: MIT",
+    "split": "ann-benchmarks train_test_split(X, test_size=10000, random_state=1): rows are already shuffled",
+    "raw_sha256": "544af1d5e84e112cd4749571dcfd8ca109818a572f850af75a3a09e093a953c4",
+    "raw_bytes": 485413888
+  },
+  "subset_rule": "first n rows of train.npy (original ann-benchmarks order)",
+  "ground_truth": {
+    "k": 100,
+    "n": [
+      100000,
+      300000,
+      1183514
+    ],
+    "files": {
+      "100000": "gt_n100000.npy",
+      "300000": "gt_n300000.npy",
+      "1183514": "gt_n1183514.npy"
+    }
+  },
+  "files": {
+    "train.npy": {
+      "sha256": "e186bdb8fa748c05e180f11119a29737d08fefcf0c65b18da11cc06652cb1a44",
+      "bytes": 473405728,
+      "shape": [
+        1183514,
+        100
+      ],
+      "dtype": "float32"
+    },
+    "queries.npy": {
+      "sha256": "59f5bf9ec2036e31fb9c1b67bd326b351adf41cf6b724953b9750149c33c0413",
+      "bytes": 4000128,
+      "shape": [
+        10000,
+        100
+      ],
+      "dtype": "float32"
+    },
+    "neighbors.npy": {
+      "sha256": "818bb476b24eb92a0248f61499d70fc7779d5cfa9cf5d9a90799744f34a5b651",
+      "bytes": 8000128,
+      "shape": [
+        10000,
+        100
+      ],
+      "dtype": "int64"
+    },
+    "gt_n100000.npy": {
+      "sha256": "df9862277e6520791563ba5ef87df5b53772cc439f0a93af73b3e1df297936c6",
+      "bytes": 8000128,
+      "shape": [
+        10000,
+        100
+      ],
+      "dtype": "int64"
+    },
+    "gt_n300000.npy": {
+      "sha256": "66216b3993c1823de920ff1441becde1329ead53b8de124e763663e2b816cf02",
+      "bytes": 8000128,
+      "shape": [
+        10000,
+        100
+      ],
+      "dtype": "int64"
+    },
+    "gt_n1183514.npy": {
+      "sha256": "d1fa61c61c8b00d1b646034c42f70725eec91193fc966d15c8af4b8c1583213a",
+      "bytes": 8000128,
+      "shape": [
+        10000,
+        100
+      ],
+      "dtype": "int64"
+    }
+  },
+  "shape": {
+    "n_train": 1183514,
+    "n_queries": 10000,
+    "dim": 100,
+    "distance": "angular"
+  },
+  "prepared_with": {
+    "script": "benchmarks/prepare_glove.py",
+    "git": {
+      "commit": "ead811f88fe7602527b9d42dfbaf617b06068f15",
+      "status": [
+        "?? benchmarks/configs/glove-correctness.toml",
+        "?? benchmarks/manifests/glove-100-angular.json"
+      ]
+    },
+    "python": "3.13.9 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 19:11:29) [Clang 20.1.8 ]",
+    "versions": {
+      "numpy": "2.5.3",
+      "h5py": "3.16.0"
+    },
+    "rust_hnsw_build_info": {
+      "profile": "release",
+      "opt_level": "3",
+      "debug": "false",
+      "debug_assertions": false,
+      "rustflags": "-C link-arg=-undefined -C link-arg=dynamic_lookup",
+      "profile_env": "",
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)"
+    }
+  }
+}
