@@ -15,6 +15,13 @@ import numpy as np
 DISTANCE_RANGE_TOL = 1e-5
 
 
+class IncompleteResultsError(RuntimeError):
+    """實作無法對某個 query 回傳 k 個結果，而且只能整批失敗（例如 hnswlib，decision 007）。
+
+    adapter 不得改成逐筆查詢或做任何 fallback；runner 把該點記為「結果不足 k」。
+    """
+
+
 @runtime_checkable
 class AnnIndex(Protocol):
     name: str

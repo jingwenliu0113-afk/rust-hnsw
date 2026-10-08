@@ -12,24 +12,14 @@ import pytest
 
 import rust_hnsw
 from benchmarks.adapters import RustExact, RustHnsw
-from benchmarks.interface import AnnIndex, HnswAnnIndex, check_search_result, prepare_vectors
+from benchmarks.interface import AnnIndex, HnswAnnIndex, check_search_result
 from benchmarks.metrics import recall_at_k
+from helpers import duplicate_data, random_unit
 
 
 def circle(degrees):
     rad = np.deg2rad(degrees)
     return np.stack([np.cos(rad), np.sin(rad)], axis=1).astype(np.float32)
-
-
-def random_unit(seed, n, dim):
-    return prepare_vectors(np.random.default_rng(seed).standard_normal((n, dim)))
-
-
-def duplicate_data(seed, n, dim):
-    """5 個方向各重複多次並打散（decision 004：會出現結果不足 k）。"""
-    rng = np.random.default_rng(seed)
-    base = rng.standard_normal((5, dim)).astype(np.float32)
-    return np.ascontiguousarray(base[rng.permutation(np.arange(n) % 5)])
 
 
 def build(data, **params):

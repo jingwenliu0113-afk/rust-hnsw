@@ -111,6 +111,8 @@ HNSW 原論文（Malkov & Yashunin）有幾處留給實作者決定，hnswlib �
 - 原本測試假設「ef ≥ n 時結果等於 exact」。這個假設只在 n ≤ M0 + 1（layer 0 從不 prune）時有保證。
   因此改為只斷言 graph 不變量、結果格式與補齊規則，並在測試註解中說明原因。
 - hnswlib 的 heuristic 判斷條件相同（strict `<`），理論上也會被副本佔滿鄰居清單；**尚未實測**。
+  - 補記（2026-10-08）：已於 007 實測。同一類資料上，Rust 的可到達點數恆為 2M + 1，FAISS 與 hnswlib 都較多；
+    graph 斷裂最嚴重的是本專案的 Rust。Core 階段仍不改演算法。
 - 對實驗的意義：真實資料集的重複率（003 已要求報告）不只影響 recall 的計算，也可能影響 graph 連通性。
   載入真實資料集時，要同時報告重複率，並觀察是否出現結果不足 k（padding）的 query。
   Core 階段不針對這點改演算法；若要處理，需另寫 decision log。
