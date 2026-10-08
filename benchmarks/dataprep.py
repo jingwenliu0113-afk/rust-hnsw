@@ -7,6 +7,7 @@ import hashlib
 import importlib.metadata
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -69,14 +70,27 @@ def verify_frozen_ground_truth(gt: np.ndarray, train_subset: np.ndarray, queries
         raise ValueError("frozen ground truth does not match exact search on the first queries")
 
 
-def git_commit() -> str:
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, check=True, capture_output=True, text=True).stdout
-    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=REPO, check=True, capture_output=True, text=True).stdout
-    return head.strip() + ("-dirty" if dirty.strip() else "")
+def _git(*args: str) -> str:
+    return subprocess.run(["git", *args], cwd=REPO, check=True, capture_output=True, text=True).stdout
 
 
-def package_versions(names) -> dict[str, str]:
-    return {name: importlib.metadata.version(name) for name in names}
+def git_state() -> dict:
+    """HEAD 與 `git status` 的逐行清單（與 run.json 的 008 §10 相同旗標），看得出 dirty 的是哪些檔案。"""
+    return {"commit": _git("rev-parse", "HEAD").strip(),
+            "status": _git("status", "--porcelain=v1", "--untracked-files=all").splitlines()}
+
+
+def prepared_with(script: str, packages) -> dict:
+    """manifest 的準備環境：程式版本、Python、套件版本，以及計算 frozen ground truth 的 rust_hnsw build。"""
+    import rust_hnsw
+
+    return {
+        "script": script,
+        "git": git_state(),
+        "python": sys.version,
+        "versions": {name: importlib.metadata.version(name) for name in packages},
+        "rust_hnsw_build_info": dict(rust_hnsw.BUILD_INFO),
+    }
 
 
 def write_manifest(manifest: dict, path) -> None:

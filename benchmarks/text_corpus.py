@@ -38,12 +38,15 @@ def truncate_at_space(text: str, limit: int = MAX_CHARS) -> str:
 
 
 def article_passages(article_id: str, text: str) -> list[tuple[str, str]]:
-    """一篇文章的 passage：以換行切段，正規化，保留 ≥ 200 字元的段落並截到 1,000 字元。"""
+    """一篇文章的 passage：以換行切段，正規化，截到 1,000 字元，再保留 ≥ 200 字元的段落。
+
+    先截斷再過濾：截斷點若落在 200 字元之前（前段很長沒有空白），截斷後的短句也會被丟棄。
+    """
     kept = []
     for paragraph in text.split("\n"):
-        normalized = normalize_paragraph(paragraph)
-        if len(normalized) >= MIN_CHARS:
-            kept.append(truncate_at_space(normalized))
+        passage = truncate_at_space(normalize_paragraph(paragraph))
+        if len(passage) >= MIN_CHARS:
+            kept.append(passage)
     return [(f"{article_id}:{index}", passage) for index, passage in enumerate(kept)]
 
 
@@ -87,7 +90,7 @@ class Split:
 def build_split(articles, n_base: int, n_queries: int) -> Split:
     """deterministic 而且 disjoint 的 base / query（以文章為單位，011 §3.3）。
 
-    `articles` 為 (id, title, text) 的 iterable，輸入順序不影響結果。
+    `articles` 為 (id, title, text) 的 iterable；文章 id 唯一（Wikipedia page id）時，輸入順序不影響結果。
     """
     ordered = sorted(((article_key(str(a)), str(a), t, x) for a, t, x in articles), key=lambda item: item[0])
     seen_texts: set[str] = set()

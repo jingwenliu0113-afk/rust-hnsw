@@ -112,7 +112,7 @@ def test_glove_manifest_matches_the_decision():
 # ---- manifest → registry → runner ----
 
 
-def make_npy_dataset(tmp_path, n=300, nq=120, dim=8, frozen_n=(300,)):
+def make_npy_dataset(tmp_path, n=300, nq=120, dim=8, frozen_n=(300,), neighbors=False):
     rng = np.random.default_rng(4)
     directory = tmp_path / "ds"
     directory.mkdir()
@@ -126,8 +126,13 @@ def make_npy_dataset(tmp_path, n=300, nq=120, dim=8, frozen_n=(300,)):
     for m, gt in gts.items():
         np.save(directory / f"gt_n{m}.npy", gt)
         files[f"gt_n{m}.npy"] = dataprep.file_record(directory / f"gt_n{m}.npy")
+    if neighbors:
+        # 與 GloVe 相同：資料集自帶 n = 全部 train 的 top-100（ann-benchmarks 存成 int32）。
+        np.save(directory / "neighbors.npy", exact_top(train, queries, 100).astype(np.int32))
+        files["neighbors.npy"] = dataprep.file_record(directory / "neighbors.npy")
     manifest = {"name": "tiny-npy", "kind": "npy", "metric": "angular", "directory": str(directory),
-                "train": "train.npy", "queries": "queries.npy", "neighbors": None, "files": files,
+                "train": "train.npy", "queries": "queries.npy", "neighbors": "neighbors.npy" if neighbors else None,
+                "files": files,
                 "ground_truth": {"k": 100, "n": list(frozen_n), "files": {str(m): f"gt_n{m}.npy" for m in frozen_n}}}
     path = tmp_path / "tiny-npy.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -175,6 +180,48 @@ def test_runner_refuses_a_tampered_frozen_ground_truth(tmp_path):
     text = stub_config(["exact-stub"], n=(300,)).replace('"smoke-gaussian"', '"tiny-npy"')
     with pytest.raises(ValueError, match="SHA-256"):
         run(text, "smoke", tmp_path / "runs", implementations=STUBS, registry=registry)
+
+
+@pytest.mark.parametrize("name", ["queries.npy", "train.npy"])
+def test_runner_refuses_frozen_ground_truth_when_the_vectors_changed(tmp_path, name):
+    # 只改最後一列：不在前 100 個 query 的重新計算範圍內，所以只能靠 train / queries 的 SHA-256 擋下。
+    make_npy_dataset(tmp_path, frozen_n=(300,))
+    path = tmp_path / "ds" / name
+    x = np.load(path)
+    x[-1] = x[0]
+    np.save(path, x)
+    registry = datasets.load_registry(tmp_path)
+    text = stub_config(["exact-stub"], n=(300,)).replace('"smoke-gaussian"', '"tiny-npy"')
+    with pytest.raises(ValueError, match=name):
+        run(text, "smoke", tmp_path / "runs", implementations=STUBS, registry=registry)
+
+
+def test_runner_refuses_a_frozen_ground_truth_that_is_not_exact(tmp_path):
+    # SHA-256 與 manifest 相符（manifest 跟著更新），只剩重新計算的檢查能擋下。
+    path, _, _ = make_npy_dataset(tmp_path, frozen_n=(300,))
+    gt_path = tmp_path / "ds" / "gt_n300.npy"
+    gt = np.load(gt_path)
+    gt[3, [0, 1]] = gt[3, [1, 0]]
+    np.save(gt_path, gt)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["files"]["gt_n300.npy"] = dataprep.file_record(gt_path)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    registry = datasets.load_registry(tmp_path)
+    text = stub_config(["exact-stub"], n=(300,)).replace('"smoke-gaussian"', '"tiny-npy"')
+    with pytest.raises(ValueError, match="does not match exact search"):
+        run(text, "smoke", tmp_path / "runs", implementations=STUBS, registry=registry)
+
+
+def test_runner_compares_provided_neighbors_only_on_the_full_train(tmp_path):
+    make_npy_dataset(tmp_path, frozen_n=(300,), neighbors=True)
+    registry = datasets.load_registry(tmp_path)
+    assert registry["tiny-npy"].neighbors == "neighbors.npy"
+    text = stub_config(["exact-stub"], n=(200, 300)).replace('"smoke-gaussian"', '"tiny-npy"')
+    result = run(text, "smoke", tmp_path / "runs", implementations=STUBS, registry=registry)
+    subsets = result.record["subsets"]
+    assert subsets["300"]["provided_gt_agreement"] == {"status": "computed", "recall_of_provided_at_10": 1.0}
+    assert subsets["200"]["provided_gt_agreement"]["status"] == "not_applicable"
+    assert "neighbors.npy" in result.record["dataset"]["files_sha256"]
 
 
 def test_registered_vectors_are_used_unchanged_and_validated():

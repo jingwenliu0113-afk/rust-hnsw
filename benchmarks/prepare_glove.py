@@ -108,8 +108,7 @@ def main(argv=None) -> int:
         manifest["ground_truth"]["files"][str(n)] = f"gt_n{n}.npy"
     for name in ["train.npy", "queries.npy", "neighbors.npy", *manifest["ground_truth"]["files"].values()]:
         manifest["files"][name] = dataprep.file_record(directory / name)
-    manifest["prepared_with"] = {"script": "benchmarks/prepare_glove.py", "git_commit": dataprep.git_commit(),
-                                 "versions": dataprep.package_versions(["numpy", "h5py"])}
+    manifest["prepared_with"] = dataprep.prepared_with("benchmarks/prepare_glove.py", ["numpy", "h5py"])
     dataprep.write_manifest(manifest, manifest_path)
     print(manifest_path)
     return 0

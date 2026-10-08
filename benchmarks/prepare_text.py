@@ -13,6 +13,7 @@ import argparse
 import json
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 import numpy as np
@@ -85,8 +86,8 @@ def prepare(name: str, raw: Path, n_base: int, n_queries: int, gt_n, embed_comma
         "neighbors": None,
         "source": {**corpus, "raw_file": dataprep.relative_to_repo(raw)},
         "preprocessing": {
-            "paragraphs": "split on newline, NFC, collapse whitespace, keep >= min_chars, truncate at the last space "
-                          "within max_chars",
+            "paragraphs": "split on newline, NFC, collapse whitespace, truncate at the last space within max_chars, "
+                          "then keep >= min_chars",
             "min_chars": text_corpus.MIN_CHARS,
             "max_chars": text_corpus.MAX_CHARS,
             "input_format": "title: {title} | text: {passage}",
@@ -96,8 +97,9 @@ def prepare(name: str, raw: Path, n_base: int, n_queries: int, gt_n, embed_comma
         "subset_rule": "first n rows of train.npy (base passages in salted-SHA-256 article order)",
         "ground_truth": {"k": dataprep.GT_K, "n": sorted(int(n) for n in gt_files), "files": gt_files},
         "files": {name_: dataprep.file_record(directory / name_) for name_ in files},
-        "prepared_with": {"script": "benchmarks/prepare_text.py", "git_commit": dataprep.git_commit(),
-                          "versions": dataprep.package_versions(["numpy", "pyarrow"])},
+        # NFC 與空白的定義取決於 Python 內建的 Unicode 資料庫，所以一併記錄它的版本。
+        "prepared_with": {**dataprep.prepared_with("benchmarks/prepare_text.py", ["numpy", "pyarrow"]),
+                          "unicodedata": unicodedata.unidata_version},
     }
     path = Path(manifest_dir) / f"{name}.json"
     dataprep.write_manifest(manifest, path)

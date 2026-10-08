@@ -235,7 +235,7 @@ def _provided_gt_agreement(dataset, provided, n: int, n_train: int, gt: np.ndarr
     return {"status": "computed", "recall_of_provided_at_10": evaluate.recall_at_k(provided, gt, protocol.K)}
 
 
-def _prepare_subsets(config, dataset, provided, train, queries, run_dir: Path) -> tuple[dict, dict]:
+def _prepare_subsets(config, dataset, provided, train, queries, run_dir: Path, digests: dict) -> tuple[dict, dict]:
     """每個 n 的 ground truth 與資料集檢查；全部在第一個子 process 啟動前完成（008 §4）。"""
     import rust_hnsw
 
@@ -245,7 +245,7 @@ def _prepare_subsets(config, dataset, provided, train, queries, run_dir: Path) -
         subset = train[:n]
         frozen = getattr(dataset, "ground_truth", {}).get(n)
         if frozen is not None:
-            gt, gt_source = _frozen_ground_truth(dataset, frozen, subset, queries)
+            gt, gt_source = _frozen_ground_truth(dataset, frozen, subset, queries, digests)
         else:
             exact = rust_hnsw.ExactIndex(train.shape[1])
             exact.add(subset)
@@ -267,8 +267,16 @@ def _prepare_subsets(config, dataset, provided, train, queries, run_dir: Path) -
     return records, gts
 
 
-def _frozen_ground_truth(dataset, name: str, subset, queries) -> tuple[np.ndarray, dict]:
-    """manifest 登記的 frozen ground truth：SHA-256 相符，且前 100 個 query 重新計算的 top-10 完全相同才使用（011 §1）。"""
+def _frozen_ground_truth(dataset, name: str, subset, queries, digests: dict) -> tuple[np.ndarray, dict]:
+    """manifest 登記的 frozen ground truth：SHA-256 相符，且前 100 個 query 重新計算的 top-10 完全相同才使用（011 §1）。
+
+    gt 是否 exact 取決於 train 與 queries，所以兩者的 SHA-256（`digests`，run.json 已記錄）也必須等於 manifest；
+    smoke 與 formal 都檢查。
+    """
+    for vectors in (dataset.train, dataset.queries):
+        if digests.get(vectors) != dataset.sha256.get(vectors):
+            raise ValueError(f"frozen ground truth {name}: {vectors} SHA-256 {digests.get(vectors)} "
+                             "does not match the manifest")
     path = Path(dataset.directory) / name
     digest = environment.sha256_file(path)
     if digest != dataset.sha256.get(name):
@@ -601,7 +609,9 @@ def run(config_text: str, mode: str, output_root, *, implementations=IMPLEMENTAT
             signal.signal(sig, _raise_aborted)
     error = None
     try:
-        record["subsets"], gts = _prepare_subsets(config, dataset, provided, train, queries, run_dir)
+        record["subsets"], gts = _prepare_subsets(
+            config, dataset, provided, train, queries, run_dir, record["dataset"]["files_sha256"]
+        )
         queries_path = scratch / "queries.npy"
         np.save(queries_path, queries)
         for group, build, names in order:

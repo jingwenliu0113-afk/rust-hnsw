@@ -6,6 +6,10 @@ torch==2.14.1
 torchvision==0.29.1
 transformers==5.19.0
 sentence-transformers==6.1.0
+# transformers 只限制範圍；tokenizers 決定 token id、safetensors 載入權重，都會影響輸出，所以一併固定。
+tokenizers==0.23.2
+safetensors==0.8.0
+huggingface-hub==1.33.0
 numpy==2.5.3
 pyarrow==25.0.1
 # EmbeddingGemma2Processor 即使只處理文字也需要 PIL。

@@ -6,7 +6,10 @@
 - 輸入 JSONL 的每一行有 `input` 欄位（已是 `title: … | text: …` 格式）。
 - 固定 model revision、fp32、CPU、thread 數與 seed；不用 fp16（model card 明示會產生 NaN 或劣化的 embedding）。
 - 完整 768 維，不做 Matryoshka truncation；以 f64 計算 norm 正規化後存成 float32。
-- 對每個 job 的前 32 筆重新 encode 一次，必須逐位元相同。
+- batch size 1：每段文字單獨 forward、不 padding，向量只取決於文字與固定的 runtime，與批次組成無關
+  （有無 padding 的輸出差約 2e-7，011 §3.4 補記）。
+- 對每個 job 的前 32 筆單獨重新 encode 一次，必須逐位元相同。
+- 開始前比對已安裝版本與 `requirements-embed.txt`，不符就拒絕。
 """
 
 import argparse
@@ -20,6 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
+REQUIREMENTS = Path(__file__).resolve().parents[1] / "requirements-embed.txt"
+
 MODEL_ID = "google/embeddinggemma-2"
 REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 MODEL_FILE = "model.safetensors"
@@ -29,7 +34,7 @@ DTYPE = "float32"
 DEVICE = "cpu"
 THREADS = 8
 SEED = 0
-BATCH_SIZE = 32
+BATCH_SIZE = 1
 DETERMINISM_SAMPLE = 32
 UNIT_NORM_TOLERANCE = 1e-5
 
@@ -42,6 +47,26 @@ def check_dtype(dtype: str) -> None:
         raise ValueError("fp16 is not allowed for EmbeddingGemma 2 (NaN or degraded embeddings); use bfloat16 or float32")
     if dtype not in _ALLOWED:
         raise ValueError(f"dtype must be one of {sorted(_ALLOWED)}, got {dtype!r}")
+
+
+def parse_pins(requirements_text: str) -> dict[str, str]:
+    """`name==version` 的固定版本；與 `environment.parse_pins` 規則相同。
+
+    這裡不 import benchmarks.environment：它會連帶 import datasets，在 import 時讀 manifests。
+    """
+    pins = {}
+    for line in requirements_text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if "==" in line:
+            name, version = line.split("==", 1)
+            pins[name.strip()] = version.strip()
+    return pins
+
+
+def mismatched_pins(pins: dict[str, str], installed) -> list[str]:
+    """`installed(name)` 回傳已安裝的版本（例如 `importlib.metadata.version`）。"""
+    return [f"{name} {installed(name)} != pinned {version}" for name, version in sorted(pins.items())
+            if installed(name) != version]
 
 
 def l2_normalize(x: np.ndarray) -> np.ndarray:
@@ -121,6 +146,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     started = time.time()
+    pins = parse_pins(REQUIREMENTS.read_text(encoding="utf-8"))
+    mismatched = mismatched_pins(pins, importlib.metadata.version)
+    if mismatched:
+        raise SystemExit(f"installed versions differ from {REQUIREMENTS.name}: {', '.join(mismatched)}")
     model = load_model()
     digest = model_file_sha256()
     if digest != MODEL_FILE_SHA256:
@@ -158,6 +187,7 @@ def main(argv=None) -> int:
         "threads": THREADS,
         "seed": SEED,
         "batch_size": BATCH_SIZE,
+        "padding": "none (one text per forward pass)",
         "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
         "normalization": "sentence-transformers Normalize, then f64 L2 normalization stored as float32",
         "prompt": "none added by the library; inputs are 'title: {title} | text: {passage}'",
@@ -165,8 +195,7 @@ def main(argv=None) -> int:
         "versions": {
             "python": sys.version.split()[0],
             "platform": platform.platform(),
-            **{name: importlib.metadata.version(name)
-               for name in ("torch", "transformers", "sentence-transformers", "numpy", "huggingface-hub")},
+            **{name: importlib.metadata.version(name) for name in pins},
         },
         "jobs": jobs,
         "seconds_total": time.time() - started,

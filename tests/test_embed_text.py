@@ -15,6 +15,22 @@ def test_pinned_model_and_runtime_settings():
     assert et.REVISION == "914f7f89142e33e77833254d9c9b90c3cef7303b"
     assert et.MODEL_FILE_SHA256 == "197a32965d4b1105faf060417baa899e193fb73cd401f42ec9295234d5553d79"
     assert (et.DIM, et.DTYPE, et.DEVICE, et.THREADS, et.SEED) == (768, "float32", "cpu", 8, 0)
+    assert et.BATCH_SIZE == 1  # 不 padding：向量與批次組成無關
+
+
+def test_requirements_pin_the_packages_that_affect_the_output():
+    pins = et.parse_pins(et.REQUIREMENTS.read_text(encoding="utf-8"))
+    for name in ("torch", "transformers", "sentence-transformers", "tokenizers", "safetensors", "huggingface-hub"):
+        assert name in pins
+
+
+def test_installed_versions_must_match_the_pins():
+    pins = et.parse_pins("torch==2.14.1  # 註解\n# tokenizers==0.1\ntokenizers==0.23.2\n")
+    assert pins == {"torch": "2.14.1", "tokenizers": "0.23.2"}
+    assert et.mismatched_pins(pins, {"torch": "2.14.1", "tokenizers": "0.23.2"}.get) == []
+    assert et.mismatched_pins(pins, {"torch": "2.14.1", "tokenizers": "0.23.3"}.get) == [
+        "tokenizers 0.23.3 != pinned 0.23.2"
+    ]
 
 
 @pytest.mark.parametrize("dtype", ["float16", "fp16", "half"])
@@ -78,3 +94,12 @@ def test_similar_texts_are_closer(model):
     vectors = et.encode(model, [*TEXTS, "title: France | text: The capital of France is Paris."])
     similarity = vectors @ vectors[3]
     assert int(np.argmax(similarity[:3])) == 0
+
+
+def test_vectors_do_not_depend_on_batch_composition(model):
+    # 長度不一的 40 段文字：舊設定（batch 32，依長度排序後 padding）下，前 32 筆單獨重新 encode 會差約 2e-7。
+    words = "the quick brown fox jumps over the lazy dog".split()
+    texts = [f"title: Item {i} | text: " + " ".join(words[j % len(words)] for j in range(4 + 6 * i)) for i in range(40)]
+    full = et.encode(model, texts)
+    np.testing.assert_array_equal(et.encode(model, texts[: et.DETERMINISM_SAMPLE]), full[: et.DETERMINISM_SAMPLE])
+    np.testing.assert_array_equal(et.encode(model, texts[::-1])[::-1], full)

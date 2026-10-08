@@ -64,6 +64,9 @@ def test_preparation_writes_files_ground_truth_and_a_registrable_manifest(tmp_pa
     queries = [json.loads(line) for line in open(directory / "queries.jsonl", encoding="utf-8")]
     assert base[0]["input"] == f"title: {base[0]['title']} | text: {base[0]['text']}"
     assert {q["article_id"] for q in queries}.isdisjoint({b["article_id"] for b in base})
+    prepared = manifest["prepared_with"]
+    assert {"git", "python", "versions", "rust_hnsw_build_info", "unicodedata"} <= set(prepared)
+    assert len(prepared["git"]["commit"]) == 40 and isinstance(prepared["git"]["status"], list)
     gt = np.load(directory / "gt_n300.npy")
     dataprep.verify_frozen_ground_truth(gt, np.load(directory / "train.npy"), np.load(directory / "queries.npy"))
 

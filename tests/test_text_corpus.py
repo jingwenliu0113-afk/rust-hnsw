@@ -21,6 +21,14 @@ def test_paragraphs_are_normalized_filtered_and_truncated_at_a_space():
     assert not passages[1][1].endswith(" ")
 
 
+def test_truncation_never_yields_a_short_passage():
+    # 前 1,001 字元內唯一的空白在第 2 個字元：截斷後只剩 "Hi"，必須丟棄。
+    assert tc.article_passages("1", "Hi " + "x" * 1200) == []
+    passages = tc.article_passages("2", "\n".join(["Hi " + "x" * 1200, "word " * 300, LONG]))
+    assert all(tc.MIN_CHARS <= len(p) <= tc.MAX_CHARS for _, p in passages)
+    assert [pid for pid, _ in passages] == ["2:0", "2:1"]
+
+
 def test_unicode_is_nfc_normalized():
     decomposed = "Café " + "x" * 200
     (_, passage), = tc.article_passages("1", decomposed)

@@ -9,7 +9,9 @@
 - 使用者已決定資料集（2026-10-08）：標準 ANN 用 `glove-100-angular`；真實文字 workload 用公開文字 corpus + `google/embeddinggemma-2`。
 - 資料集 decision 011 已寫好；GloVe loader（`benchmarks/prepare_glove.py`）與文字 workload 的流程
   （`text_corpus.py`、`embed_text.py`、`prepare_text.py`）已實作並測試。
-- 進行中：下載資料與模型，產生 glove-100-angular 的 `.npy` / frozen ground truth，以及 EmbeddingGemma 2 的 pilot（10,000 base + 1,000 query）。
+- 資料準備程式經過兩個角度的審查（19 個 findings，採用 8 個、駁回 11 個，摘要見 011 文末）。最重要的一項：embedding 改用 batch size 1，
+  因為原本的重現性檢查在 batch 32 下必然失敗（padding 造成約 2e-7 的差），第一次文字 pilot 已因此中止。
+- 進行中：以修正後的程式重新產生 EmbeddingGemma 2 的 pilot（10,000 base + 1,000 query）與 glove-100-angular（新的 manifest 格式，並順便確認重跑結果逐位元相同）。
 
 尚未進 Advanced（Gate 條件都還沒有資料可判斷），沒有做任何 Optional。
 
@@ -32,7 +34,18 @@
 - `f4500ba feat(benchmarks): add report generation for the pre-registered comparison rules`
 - `beb8fd5 docs: record dataset proposal and idle-load attempt in NEXT`
 - `0cd4e50 fix(benchmarks): harden runner after implementation review`
-- `feat(datasets): add GloVe and EmbeddingGemma 2 dataset preparation`（本次）
+- `4478926 feat(datasets): add GloVe and EmbeddingGemma 2 dataset preparation`
+- `fix(datasets): make embeddings independent of batch composition and bind frozen ground truth to the vectors`（本次）
+
+## 最近完成：資料準備程式的審查（decision 011 補記）
+
+- 兩個角度（資料正確性、與 runner 的整合），19 個 findings，各有一位驗證者重現或反駁；採用 8 個（實際 6 項修正）、駁回 11 個。
+- 修正：
+  - embedding 改用 batch size 1（不 padding，向量與批次組成無關；batch 32 下前 32 筆單獨重新 encode 會差約 2e-7，已以 mutation 確認新測試能抓到）。
+  - frozen ground truth 使用前另外比對 train / queries 的 SHA-256（原本只改 queries 第 100 列之後，smoke 仍會沿用過期的 gt）。
+  - 前處理改為先截斷再過濾；pin tokenizers / safetensors / huggingface-hub 並在執行時比對；
+    manifest 記錄 `git status` 逐行清單、Python 版本、`rust_hnsw.BUILD_INFO` 與 Unicode 資料庫版本。
+- 測試：pytest 408 個（另 .venv-embed 16 個）。
 
 ## 最近完成：runner 實作後的審查
 
@@ -80,7 +93,10 @@
    - 程式與測試已完成：GloVe 轉換、frozen ground truth（runner 以 SHA-256 加前 100 個 query 重算驗證後使用）、
      manifest 登記、文字 corpus 的前處理與切分（以文章為單位、加鹽 SHA-256 排序、完全相同的文字只留一份）、
      EmbeddingGemma 2 的 embedding（固定 revision、fp32、CPU、8 threads、拒絕 fp16、逐位元重現檢查）。
-   - 待完成：實際產生 glove-100-angular 與 pilot 的資料檔與 manifest（frozen ground truth：GloVe n = 100k / 300k / 1,183,514；pilot n = 10,000）。
+   - glove-100-angular 已產生一次（舊 manifest 格式；當時 HEAD 4478926、`git diff HEAD` 為空，`-dirty` 只來自未追蹤的 config 與 manifests/）。
+     以新程式重跑，比對 SHA-256 確認可重現，再把 manifest 與 `glove-correctness.toml` 放在同一個 commit。
+   - pilot 以修正後的程式重跑（batch size 1）；manifest 與 `text-pilot-correctness.toml` 放在同一個 commit。
+   - 之後：在兩個資料集上跑 correctness 用的 smoke run（recall vs efSearch，不作效能結論）。
    - pilot 之後：另寫 decision 決定正式文字 workload 的規模（N 與登記的 n）。
 5. **第一張 recall vs efSearch 圖與正式 run**（formal config 先 commit，依 010 列出 variance 格點）。
 6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
