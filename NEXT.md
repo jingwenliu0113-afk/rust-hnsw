@@ -2,62 +2,68 @@
 
 ## 目前位置
 
-**Core / Day 1 已完成**，下一步進入 Week 1（HNSW skeleton）。
+**Core / Week 1 進行中**：步驟 1「HNSW insert / search」已完成。
 尚未進 Advanced（Gate 條件都還沒有資料可判斷），沒有做任何 Optional。
 
 ## 上次完成（2026-10-08）
 
-### 環境
+### Git
 
-- 安裝 Rust stable 1.99.0（官方 rustup，`--no-modify-path`，未改任何 shell 設定檔）。
-- 專案內 `.venv`（uv，CPython 3.13.9），依賴固定在 `requirements-dev.txt`
-  （maturin 1.15.0、numpy 2.5.3、pytest 9.1.1）。沒有動到 Anaconda base env。
+- `rust-hnsw/` 初始化為獨立 git repo（branch `main`），`.gitignore` 補上 `.DS_Store`。
+- 重跑全部測試與 `./scripts/test.sh` 皆通過後，建立 baseline commit：
+  `ddcb27d chore: establish core baseline`（Day 1 的全部內容）。
+- Week 1 步驟 1（HNSW insert / search、decision 004、correctness tests）已依使用者要求做成獨立 commit。
 
-### Day 1 五項
+### Week 1 步驟 1：HNSW insert / search
 
-1. **Rust workspace**：`crates/hnsw`（純 Rust）＋ `python`（PyO3 binding crate）。
-   `cargo test` 預設只跑 `crates/hnsw`。
-2. **cosine distance 與 exact brute-force**：`crates/hnsw/src/distance.rs`、`exact.rs`。
-   f64 正規化後存 f32；exact search 以 f64 累加、依 `(distance, id)` 排序。
-3. **correctness tests**（全部先寫測試、確認紅燈後才實作）：
-   - Rust 34 個：distance 14、exact 20。
-     包含單位圓人工可驗證案例、tie-break、atomic add、錯誤處理、
-     與獨立完整排序參考實作比對（含大量重複向量）。
-   - Python 50 個：binding、interface、metrics。
-     包含與 numpy 參考實作比對、Fortran-order / strided array 被拒絕。
-   - mutation 檢查：拿掉 id tie-break 會被「大量重複向量」測試抓到。
-4. **Python binding skeleton**：`rust_hnsw.ExactIndex(dim)`，`add` / `search` / `len` / `dim`。
-   只收 float32 C-contiguous 2-D array，search 期間釋放 GIL。
-5. **固定 benchmark interface**：`benchmarks/interface.py`（`AnnIndex` Protocol、
-   `prepare_vectors`、`check_search_result`）、`benchmarks/adapters.py`（`RustExact`）、
-   `benchmarks/metrics.py`（`recall_at_k`、`tie_aware_recall_at_k`）。
+- 先寫 **decision 004**：
+  - 演算法細節對齊 hnswlib：heuristic 鄰居選擇、`M0 = 2M`、`ef = max(efConstruction, M)`、
+    上層 greedy、下一層 entry 為最近點、候選數 < M 時全收。
+  - baseline 表示法刻意不優化：per-node `Vec`、`HashSet` visited、`BinaryHeap`、純量距離。
+- 新增 `crates/hnsw/src/hnsw.rs`（`HnswIndex`、`HnswParams`）與 `rng.rs`（自帶 SplitMix64）。
+- exact 與 HNSW 共用的輸入驗證抽到 `batch.rs`（`PADDING_ID`、`check_k`、`unit_query`、`unit_rows`）。
+- 測試先行，確認紅燈後才實作：HNSW 整合測試 19 個、內部單元測試 5 個（heuristic、padding、SplitMix64）。重點：
+  - n ≤ M0 + 1 且 ef ≥ n 時，結果與 exact 完全一致（5 個 seed）。
+  - graph 不變量：鄰居數上限、無自環 / 重複、鄰居 level 足夠、entry 在最高層、layer 0 的 2M 容量有被用到。
+  - level 分佈符合 `P(level ≥ l) = 1/M^l`。
+  - 決定性：相同 seed 與順序產生相同 graph；分批 add 等於一次 add；失敗的 add 不消耗亂數。
+  - Recall 隨 efSearch 整體改善或飽和。
+- synthetic 資料（n = 3000、d = 16、M = 12、efC = 100、200 queries）的 Recall@10：
 
-### Decision logs
+  | efSearch  | 10     | 20    | 40    | 80  | 160 | 320 |
+  | --------- | ------ | ----- | ----- | --- | --- | --- |
+  | Recall@10 | 0.8775 | 0.965 | 0.997 | 1.0 | 1.0 | 1.0 |
 
-- 001 cosine 距離定義、正規化與 tie-break。
-- 002 統一 Python batch interface 與計時協定（單執行緒；QPS 用整批呼叫、P50/P95 用 batch size 1）。
-- 003 Recall@K 定義：主要為 id-based；tie-aware（eps = 1e-6）只作診斷。在看到任何結果之前登記。
+  只作 correctness，不作 benchmark 結論。
+- mutation 檢查：以下錯誤都會被測試抓到。
+  - simple selection
+  - `M0 = M`（原本抓不到，已補斷言）
+  - ef 不取 `max(ef, k)`
+  - mL 錯誤
+  - level 不用亂數
 
 ### 驗證
 
-`./scripts/test.sh` 全部通過：rustfmt、clippy `-D warnings`、cargo test（34）、maturin build、pytest（50）。
+`./scripts/test.sh` 全部通過：rustfmt、clippy `-D warnings`、Rust 58 個、maturin build、pytest 50 個。
+
+## 本次發現（如實記錄）
+
+- **大量完全重複的向量會讓 layer 0 斷裂**（300 點、5 方向各 60 份、M = 4：ef = 300 只到得了 9 個點）。
+- 原測試假設「ef ≥ n 就等於 exact」，在 n > M0 + 1 時沒有保證，所以改為斷言 graph 不變量與補齊格式。
+  機制與影響詳見 decision 004「實作後的觀察」。
+- hnswlib 是否有相同行為**尚未實測**。
 
 ## 下一步（Week 1，依序）
 
-1. **HNSW skeleton：insert + search**（`crates/hnsw/src/hnsw.rs`，單執行緒）。
-   - 先寫 decision log：neighbor selection（simple 或 heuristic）、
-     level 分佈（`mL = 1/ln(M)`）、layer 0 的 `M0 = 2M`、seed 與 insertion order 的控制、
-     結果不足 k 時的 `-1` padding。
-   - 先寫測試：
-     - ef ≥ n 的小型案例應與 exact 完全一致。
-     - 人工可驗證的小圖。
-     - synthetic 資料上 recall 隨 efSearch 整體改善、無系統性惡化（只作 correctness）。
-2. **save / load**：檔案格式先寫 decision log，再寫 round-trip 測試。
-3. **binding 加 `HnswIndex`**；`AnnIndex` 加查詢參數（efSearch）的介面，需另寫 decision log。
-4. **安裝 hnswlib、faiss-cpu 並寫 adapters**：依 002，單執行緒、同一份 unit vectors、輸出轉成統一格式。
-5. **第一個小型真實資料集**：選擇與切分需先寫 decision log。
-   候選為 ann-benchmarks 原生 angular 的資料集（例如 GloVe-100-angular）。
-6. **第一張 recall vs efSearch 圖。**
+1. **save / load**：
+   - 先寫 decision log，定檔案格式：magic / version、dim、params、vectors、graph、entry point，以及是否存 RNG 狀態。
+   - 先寫 round-trip 測試：load 後 graph 與 search 結果逐位元相同；load 後繼續 add 的結果與未存檔時相同（需要存 RNG 狀態）。
+2. **binding 加 `HnswIndex`**；`AnnIndex` 加 efSearch 介面，需另寫 decision log。
+   Python 端把 `PADDING_ID` 轉成 `-1`（002）。
+3. **安裝 hnswlib、faiss-cpu 並寫 adapters**：依 002，單執行緒、同一份 unit vectors、輸出轉成統一格式。
+4. **第一個小型真實資料集**：選擇與切分需先寫 decision log。
+   同時報告重複率與結果不足 k（padding）的 query 比例（004 的觀察）。
+5. **第一張 recall vs efSearch 圖。**
 
 ## Blocked
 
@@ -65,9 +71,9 @@
 
 ## 需要使用者決定或留意
 
-- 已依使用者決定，`rust-hnsw/` 為獨立 git repo（branch `main`）。
-- 使用者已把 `source "$HOME/.cargo/env"` 加到 `~/.zshrc`；`scripts/test.sh` 也會自動載入。
 - 本次沒有跑任何正式 benchmark，也沒有取用 Mac heavy lock 或遠端機器（都不需要）。
+- session 結束時，Mac heavy lock 由 incident-investigator 的 M1 smoke test 持有（process 仍在執行，不是 stale lock）。
+  本專案沒有碰這個 lock；之後要跑正式 benchmark 時再檢查。
 
 ## SPEC 與現況差異
 

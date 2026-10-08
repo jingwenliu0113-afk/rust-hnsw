@@ -5,6 +5,12 @@ use std::fmt;
 pub enum HnswError {
     /// 維度為 0。
     InvalidDimension(usize),
+    /// index 參數小於允許的最小值。
+    InvalidParameter {
+        name: &'static str,
+        min: usize,
+        value: usize,
+    },
     /// 單一向量的長度與預期維度不符。
     DimensionMismatch { expected: usize, actual: usize },
     /// 扁平 row-major buffer 長度不是維度的整數倍。
@@ -25,6 +31,9 @@ impl fmt::Display for HnswError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidDimension(dim) => write!(f, "dimension must be positive, got {dim}"),
+            Self::InvalidParameter { name, min, value } => {
+                write!(f, "{name} must be >= {min}, got {value}")
+            }
             Self::DimensionMismatch { expected, actual } => {
                 write!(f, "dimension mismatch: expected {expected}, got {actual}")
             }

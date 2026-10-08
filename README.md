@@ -5,13 +5,15 @@
 
 ## 目前狀態
 
-Core / Day 1 完成：cosine distance、exact brute-force（ground truth）、
-Python binding skeleton、固定的 Python batch interface。HNSW 本體尚未開始。
+- Core / Day 1 完成：cosine distance、exact brute-force（ground truth）、
+  Python binding skeleton、固定的 Python batch interface。
+- Core / Week 1 進行中：HNSW insert / search 已完成（Rust）；save / load、
+  HNSW 的 Python binding、hnswlib / FAISS adapters 尚未開始。
 
 ## 目錄
 
 ```text
-crates/hnsw/        Rust 實作（distance、exact search；之後的 HNSW）
+crates/hnsw/        Rust 實作（distance、exact search、HNSW）
 python/             PyO3 binding，Python module 名稱 `rust_hnsw`
 benchmarks/         統一 batch interface、adapters、Recall 指標
 tests/              Python 測試（binding、interface、metrics）
@@ -45,3 +47,4 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 - [001 cosine 距離定義、正規化與 tie-break](docs/decisions/001-cosine-distance-and-normalization.md)
 - [002 統一 Python batch interface 與計時協定](docs/decisions/002-python-batch-interface.md)
 - [003 Recall@K 定義與 tie-aware 診斷](docs/decisions/003-recall-definition.md)
+- [004 HNSW Core 演算法細節與 baseline 表示法](docs/decisions/004-hnsw-core-algorithm.md)

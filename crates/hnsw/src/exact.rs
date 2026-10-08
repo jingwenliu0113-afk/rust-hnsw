@@ -3,6 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+use crate::batch::{BatchResult, check_k, row_count, unit_query, unit_rows};
 use crate::distance::{dot_f64, normalize_into};
 use crate::{HnswError, Neighbor, NodeId};
 
@@ -12,15 +13,6 @@ pub struct ExactIndex {
     dim: usize,
     /// row-major 的 unit vectors。
     data: Vec<f32>,
-}
-
-/// 批次搜尋結果，row-major，shape 為 `(num_queries, k)`。
-#[derive(Debug, Clone, PartialEq)]
-pub struct BatchResult {
-    pub num_queries: usize,
-    pub k: usize,
-    pub ids: Vec<u32>,
-    pub distances: Vec<f32>,
 }
 
 /// 排序 key 為 `(distance, id)`：同距離時 id 小者優先（decision 001）。
@@ -51,17 +43,6 @@ impl PartialEq for Candidate {
 }
 
 impl Eq for Candidate {}
-
-/// row-major buffer 的 row 數；長度不是 `dim` 的整數倍時回傳錯誤。
-fn row_count(buffer: &[f32], dim: usize) -> Result<usize, HnswError> {
-    if !buffer.len().is_multiple_of(dim) {
-        return Err(HnswError::RaggedBuffer {
-            len: buffer.len(),
-            dim,
-        });
-    }
-    Ok(buffer.len() / dim)
-}
 
 impl ExactIndex {
     pub fn new(dim: usize) -> Result<Self, HnswError> {
@@ -106,27 +87,16 @@ impl ExactIndex {
 
     /// 回傳最近的 k 個鄰居，依 `(distance, id)` 升冪。
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<Neighbor>, HnswError> {
-        self.check_k(k)?;
-        if query.len() != self.dim {
-            return Err(HnswError::DimensionMismatch {
-                expected: self.dim,
-                actual: query.len(),
-            });
-        }
-        let mut unit_query = Vec::with_capacity(self.dim);
-        normalize_into(query, 0, &mut unit_query)?;
-        Ok(self.search_unit(&unit_query, k))
+        check_k(self.len(), k)?;
+        let query = unit_query(query, self.dim)?;
+        Ok(self.search_unit(&query, k))
     }
 
     /// 對 row-major 的多個 query 做 `search`。所有 query 先驗證完才開始搜尋，
     /// 錯誤中的 `row` 為 query 的 row 編號。
     pub fn search_batch(&self, queries: &[f32], k: usize) -> Result<BatchResult, HnswError> {
-        self.check_k(k)?;
-        let num_queries = row_count(queries, self.dim)?;
-        let mut unit_queries = Vec::with_capacity(queries.len());
-        for (row, q) in queries.chunks_exact(self.dim).enumerate() {
-            normalize_into(q, row, &mut unit_queries)?;
-        }
+        check_k(self.len(), k)?;
+        let (num_queries, unit_queries) = unit_rows(queries, self.dim)?;
 
         let mut ids = Vec::with_capacity(num_queries * k);
         let mut distances = Vec::with_capacity(num_queries * k);
@@ -142,16 +112,6 @@ impl ExactIndex {
             ids,
             distances,
         })
-    }
-
-    fn check_k(&self, k: usize) -> Result<(), HnswError> {
-        if self.is_empty() {
-            return Err(HnswError::EmptyIndex);
-        }
-        if k == 0 || k > self.len() {
-            return Err(HnswError::InvalidK { k, len: self.len() });
-        }
-        Ok(())
     }
 
     /// 已正規化 query 的 top-k：size-k max-heap，堆頂是目前保留中最差的候選。
