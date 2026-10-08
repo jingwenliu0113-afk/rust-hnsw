@@ -64,7 +64,8 @@
 - `2c8543f feat(benchmarks): record power mode, adapter wattage and battery state`
 - `8958f33 docs: narrow the deferral to formal, performance-sensitive Mac experiments`
 - `746c1d0 docs: pre-register the formal grid (decision 013) and add the GloVe formal configs`
-- `feat(benchmarks): add the pre-merge checks and auxiliary scaling reading required by 013`（本次）
+- `fbe7f40 feat(benchmarks): add the pre-merge checks and auxiliary scaling reading required by 013`
+- `docs: add the formal-run runbook to NEXT`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -142,6 +143,15 @@
        合併前的版本一致檢查、輔助的 (16, 200)-only scaling 讀值。
      - （可以自己做）文字 4 份 config 的 commit（等 manifest）。
      - （Deferred / Blocked）閒置 load 量測、B1、B2、使用者解除今晚的限制。
+   - **正式 run 的執行手冊**（使用者解除限制、B1 / B2 決定、閒置 load 量測通過之後；每一步都在 repo root）：
+     1. `export DEVELOPER_DIR=/Library/Developer/CommandLineTools`（B3 未修好之前）。
+     2. 確認 git 乾淨、文字 4 份 config 已 commit；`./scripts/test.sh`（重新編譯 binding，formal 前置檢查要求 binding 晚於 HEAD）。
+     3. 第一次之前：`./tools/with-mac-lock .venv/bin/python -m benchmarks.idle_load`，結果必須是 `ok`。
+     4. 依 013 §5 的建議順序，一次一份：`./tools/with-mac-lock .venv/bin/python -m benchmarks.run benchmarks/configs/<config>.toml --mode formal`
+        （GloVe 1 → 8、文字 1 → 4，可交錯）。lock 拿不到（exit 75）就改天再跑，不得刪 lock。
+     5. 某份 config 的 run 若是 aborted / invalid / error：整份重跑，原本的 run 之後以 `--excluded` 列出；incomplete 照實保留、不重跑。
+     6. 每個資料集全部 config 跑完後，才產生正式報告：
+        `.venv/bin/python -m benchmarks.report <該資料集全部 run 目錄> --out results/reports/<資料集> [--excluded <失敗的 run>]`。
 6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
    - 工具已補齊（009 補記）：`profile.py --dataset <名稱> --n <n>` 與取樣前寫出的 JSON（git、BUILD_INFO、lock 狀態、Recall@10）。
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
