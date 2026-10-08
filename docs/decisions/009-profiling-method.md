@@ -43,3 +43,15 @@ SPEC 的 Gate 要求「profiler 已顯示時間主要花在哪」。Advanced 的
 - **dtrace / `cargo flamegraph`**：在 macOS 需要 sudo 或調整 SIP。
 - **samply**：需要另外安裝。
 - **只 profile Rust**：Gate 要比較的是與 hnswlib 的差距來源，必須兩邊用同一方法。
+
+## 補記（2026-10-08，在任何 Gate 證據之前）
+
+原本的工作負載只能讀任意 `.npy`（會重新正規化、不能取子集），也沒有記錄 git commit、參數與 recall，不足以落實上面「作為 Gate 證據」的三個條件。補上：
+
+- `benchmarks.profile --dataset <名稱> --n <n>`：與 runner 相同的登記向量（不重新正規化）與前 n 列子集（008 §4），ground truth 也用相同規則
+  （有 frozen 檔就驗證後使用，否則以 ExactIndex 計算）。
+- 取樣前寫出 `results/profiles/<名稱>.json`（`scripts/profile.sh` 自動傳入 `--meta`）：參數、資料集檔案的 SHA-256、ground truth 來源、
+  git commit 與 status、`rust_hnsw.BUILD_INFO`、套件版本、是否由祖先 process 持有 heavy lock、load average、機器資訊。
+- search 階段另以一次不計時的 k = 10 search 計算 Recall@10（id-based，003），記在同一個 JSON。
+  「相近的 Recall@K」以這個值判斷：各實作的 ef 由正式 run 的結果選出，取樣時再確認一次。
+- 仍然不輸出任何 latency / QPS 數字。

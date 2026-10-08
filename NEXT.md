@@ -46,7 +46,8 @@
 - `ead811f fix(datasets): record the preparation environment when preparation starts`
 - `433a61f feat(datasets): register glove-100-angular with frozen ground truth`
 - `3882eca feat(datasets): register the EmbeddingGemma 2 text pilot`
-- `docs: decide the formal text workload scale and add the GloVe cost probe`（本次）
+- `1bf8545 docs: decide the formal text workload scale and add the GloVe cost probe`
+- `feat(benchmarks): profile registered datasets and record the profiling context`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -115,6 +116,9 @@
      只使用 recall 涵蓋範圍與成本，不使用 smoke 的實作間效能差異；三個實作用同一組格點。
    - 正式 run 需要 heavy lock 與閒置的機器（第 3 項）。
 6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
+   - 工具已補齊（009 補記）：`profile.py --dataset <名稱> --n <n>` 與取樣前寫出的 JSON（git、BUILD_INFO、lock 狀態、Recall@10）。
+     已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
+   - 待正式 run 的結果出來後，依相近的 Recall@10 為各實作選 ef，在 heavy lock 下取樣。
 
 ## Blocked / 需要使用者決定
 

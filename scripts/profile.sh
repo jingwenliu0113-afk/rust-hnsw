@@ -6,9 +6,13 @@
 # 例如：
 #   ./scripts/profile.sh rust-search-smoke 5 -- --impl rust-hnsw --phase search \
 #       --synthetic 20000,64,2000 --m 16 --ef-construction 100 --seed 1 --ef 100 --k 10
+# Gate 證據（decision 009：正式資料集、heavy lock、相近的 Recall@10）：
+#   ./tools/with-mac-lock ./scripts/profile.sh glove-rust-search 20 -- --impl rust-hnsw --phase search \
+#       --dataset glove-100-angular --n 100000 --m 16 --ef-construction 200 --seed 1 --ef 128 --k 10
 #
-# 結果寫到 results/profiles/<名稱>.{log,sample.txt,top.txt}（results/ 不進版控）。
-# 這不是 latency benchmark；要作為 Gate 證據的 profiling，應以真實資料、在 ./tools/with-mac-lock 下執行。
+# 結果寫到 results/profiles/<名稱>.{log,json,sample.txt,top.txt}（results/ 不進版控）。
+# <名稱>.json 是取樣前寫出的紀錄：參數、資料集 checksum、git 狀態、binding 的編譯資訊、是否持有 heavy lock、
+# search 階段的 Recall@10（只有 --dataset 才有）。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -25,7 +29,7 @@ out=results/profiles
 mkdir -p "$out"
 log="$out/$name.log"
 
-.venv/bin/python -m benchmarks.profile "$@" --seconds "$((seconds + 3))" >"$log" 2>&1 &
+.venv/bin/python -m benchmarks.profile "$@" --seconds "$((seconds + 3))" --meta "$out/$name.json" >"$log" 2>&1 &
 pid=$!
 
 # 等待要取樣的階段開始（build 可能需要一段時間）。
