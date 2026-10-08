@@ -44,6 +44,20 @@ MEASUREMENT_PATHS = (
 )
 # 輔助 scaling 讀值（013 §4）：每個 n 只用這一格 (M, efC) 的點讀 frontier，只用來呈現格點數不同造成的混淆。
 AUX_SCALING_CELL = (16, 200)
+AUX_SCALING_METRICS = ("qps", "p50_ns", "p95_ns")
+# 013 §5：每個資料集的全部 formal config；formal 報告必須恰好包含每一份各一個 run。
+FORMAL_CONFIGS = {
+    "glove-100-angular": tuple(f"benchmarks/configs/{name}.toml" for name in (
+        "glove-formal-1-m16-order", "glove-formal-2-m16-seeds-efc400", "glove-formal-3-m48-seeds-1-2",
+        "glove-formal-4-m48-seeds-3-4", "glove-formal-5-m48-seed-5-efc100", "glove-formal-6-m32-300k",
+        "glove-formal-7-m8", "glove-formal-8-full")),
+    "simplewiki-embeddinggemma2-100k": tuple(f"benchmarks/configs/{name}.toml" for name in (
+        "text-formal-1-m16-order", "text-formal-2-m16-seeds-efc400", "text-formal-3-m8-efc100",
+        "text-formal-4-highm-scaling")),
+}
+RUNS_ROOT = REPO / "results" / "runs"
+# 合併的 run 之間必須相同的資料集紀錄（同名資料集重新準備時，向量或 ground truth 可能不同）。
+DATASET_IDENTITY = ("name", "kind", "n_train", "n_queries", "dim", "metric", "files_sha256")
 
 
 class ReportError(ValueError):
@@ -138,7 +152,12 @@ def _reading(aggregates: list[dict], target: float) -> dict:
             "index_footprint_bytes": pick("index_footprint_bytes", min)}
 
 
-def frontier(all_aggregates: list[dict], clean_aggregates: list[dict]) -> dict:
+def _location(pick: dict | None) -> tuple | None:
+    return None if pick is None else (pick["value"], pick["m"], pick["ef_construction"], pick["ef_search"], pick["incomplete"])
+
+
+def frontier(all_aggregates: list[dict], clean_aggregates: list[dict], compared=None) -> dict:
+    """`compared`：判斷「排除標記點是否改變讀值」時比較的指標（預設全部讀值）。"""
     result = defaultdict(dict)
     keys = sorted({(a["implementation"], a["n"]) for a in all_aggregates})
     for impl, n in keys:
@@ -147,7 +166,13 @@ def frontier(all_aggregates: list[dict], clean_aggregates: list[dict]) -> dict:
         per_target = {}
         for target in TARGETS:
             main, all_points = _reading(clean, target), _reading(everything, target)
-            per_target[_target_key(target)] = {"main": main, "all_points": all_points, "differs": main != all_points}
+            if compared is None:
+                differs = main != all_points
+            else:
+                # 只比讀值本身（數值與所在的點），不比參與的 build 數。
+                differs = main.get("reached") != all_points.get("reached") or any(
+                    _location(main.get(metric)) != _location(all_points.get(metric)) for metric in compared)
+            per_target[_target_key(target)] = {"main": main, "all_points": all_points, "differs": differs}
         result[impl][str(n)] = per_target
     return dict(result)
 
@@ -280,6 +305,14 @@ def _check_mergeable(records: list[dict], labels: list[str], changed_files) -> N
             seen[key] = label
     if len(records) < 2:
         return
+    for label, record in zip(labels[1:], records[1:]):
+        for field in DATASET_IDENTITY:
+            if record["dataset"].get(field) != records[0]["dataset"].get(field):
+                raise ReportError(f"{label} differs from {labels[0]} in dataset {field}")
+        for n, subset in record.get("subsets", {}).items():
+            other = records[0].get("subsets", {}).get(n)
+            if other is not None and subset.get("gt_source") != other.get("gt_source"):
+                raise ReportError(f"{label} differs from {labels[0]} in the ground truth of n = {n}")
     first = records[0]["metadata"]
     for label, record in zip(labels[1:], records[1:]):
         meta = record["metadata"]
@@ -323,7 +356,7 @@ def build_report(records: list[dict], labels: list[str] | None = None, changed_f
         "targets": [_target_key(t) for t in TARGETS],
         "frontier": front,
         "aux_scaling_cell": list(AUX_SCALING_CELL),
-        "aux_scaling_frontier": frontier(in_cell, clean_in_cell),
+        "aux_scaling_frontier": frontier(in_cell, clean_in_cell, compared=AUX_SCALING_METRICS),
         "excluded_runs": [],
         "ratios": ratios(front),
         "seed_variance": all_aggregates,
@@ -403,6 +436,16 @@ def markdown(report: dict) -> str:
                 lines.append(f"| {impl} | {n} | {target} | {_reading_cell(main, 'qps', 1, 0)} | "
                              f"{_reading_cell(main, 'p50_ns', 1e3, 1)} | {_reading_cell(main, 'p95_ns', 1e3, 1)} | "
                              f"{'是' if entry['differs'] else '否'} |")
+    aux_differing = [(impl, n, target, entry["all_points"])
+                     for impl, per_n in sorted(report["aux_scaling_frontier"].items())
+                     for n, per_target in sorted(per_n.items(), key=lambda item: int(item[0]))
+                     for target, entry in per_target.items() if entry["differs"]]
+    if aux_differing:
+        lines += ["", "### 包含被標記點的輔助讀值（只列出與上表不同者，010 §3）", "",
+                  "| 實作 | n | 目標 | QPS | P50 (µs) | P95 (µs) |", "| --- | --- | --- | --- | --- | --- |"]
+        for impl, n, target, reading in aux_differing:
+            lines.append(f"| {impl} | {n} | {target} | {_reading_cell(reading, 'qps', 1, 0)} | "
+                         f"{_reading_cell(reading, 'p50_ns', 1e3, 1)} | {_reading_cell(reading, 'p95_ns', 1e3, 1)} |")
     lines += ["", "## QPS 比值（相對 rust-hnsw；兩者都達到目標才計算）", "", "| n | 目標 | 實作 | 倍數 |", "| --- | --- | --- | --- |"]
     for n, per_target in sorted(report["ratios"].items(), key=lambda item: int(item[0])):
         for target, entry in per_target.items():
@@ -444,6 +487,10 @@ def markdown(report: dict) -> str:
                      f"{span(s['peak_rss_bytes'], 2**20, 1)} | {span(s['index_memory_bytes'], 2**20, 1)} | "
                      f"{span(s['index_footprint_bytes'], 2**20, 1)} | {s['builds']} | {s['flagged_builds']} |")
 
+    if report.get("run_configs"):
+        lines += ["", "## 合併的 run", ""]
+        lines += [f"- {c['run']}：{c['status']}，config {c['config']}"
+                  + (f"（blob {c['formal_config']['blob'][:12]}）" if c.get("formal_config") else "") for c in report["run_configs"]]
     for title, key in (("結果不足 k 的點", "incomplete_points"), ("被標記的點（不進入主要讀值）", "flagged_points"),
                        ("失敗的子 process", "failed_children"),
                        ("被排除的 run（aborted / invalid / error；整份 config 已重跑，資料不合併，013 §5）", "excluded_runs")):
@@ -523,11 +570,56 @@ def excluded_runs(run_dirs) -> list[dict]:
     return entries
 
 
-def write_report(run_dirs, out_dir, excluded=()) -> Path:
+def _config_path(record: dict) -> str | None:
+    """formal run 的 config 路徑（repo 相對，008 §1.8 的 commit 檢查寫入）；smoke 沒有。"""
+    checks = record.get("metadata", {}).get("formal_checks") or {}
+    return (checks.get("config") or {}).get("path")
+
+
+def check_formal_set(records: list[dict], run_dirs, excluded_dirs, roots=None) -> None:
+    """formal 報告（013 §5、010 §3）：恰好包含該資料集每一份 formal config 各一個 run；
+    同一份 config 另外的 formal run 不得被略過——complete / incomplete 的一律拒絕，失敗的必須以 --excluded 列出。"""
+    dataset = records[0]["dataset"]["name"]
+    expected = FORMAL_CONFIGS.get(dataset)
+    if expected is None:
+        raise ReportError(f"no formal configs are registered for {dataset!r} (013 §5)")
+    paths = [_config_path(r) for r in records]
+    for run_dir, path in zip(run_dirs, paths):
+        if path not in expected:
+            raise ReportError(f"{run_dir} ran config {path!r}, which is not a formal config of {dataset} (013 §5)")
+    for path in expected:
+        count = paths.count(path)
+        if count != 1:
+            raise ReportError(f"{path} contributes {count} runs; every formal config must contribute exactly one (013 §5)")
+    given = {Path(d).resolve() for d in run_dirs} | {Path(d).resolve() for d in excluded_dirs}
+    roots = {RUNS_ROOT, *(Path(d).resolve().parent for d in run_dirs)} if roots is None else roots
+    for root in roots:
+        for path in sorted(Path(root).glob("*/run.json")):
+            if path.parent.resolve() in given:
+                continue
+            try:
+                other = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if other.get("mode") != "formal" or other.get("dataset", {}).get("name") != dataset \
+                    or _config_path(other) not in expected:
+                continue
+            if other.get("status") in FAILED_STATUS:
+                raise ReportError(f"{path.parent} is a failed formal run of {_config_path(other)}; list it with --excluded")
+            raise ReportError(f"{path.parent} is another formal run of {_config_path(other)}; a completed formal run "
+                              "cannot be replaced or dropped (010 §3)")
+
+
+def write_report(run_dirs, out_dir, excluded=(), roots=None) -> Path:
     records = [_load(d) for d in run_dirs]
     report = build_report(records, labels=[str(d) for d in run_dirs])
+    if report["mode"] == "formal":
+        check_formal_set(records, run_dirs, excluded, roots=roots)
     report["excluded_runs"] = excluded_runs(excluded)
     report["runs"] = [str(d) for d in run_dirs]
+    report["run_configs"] = [{"run": str(d), "status": r["status"], "config": r.get("config", {}).get("path"),
+                              "formal_config": (r.get("metadata", {}).get("formal_checks") or {}).get("config")}
+                             for d, r in zip(run_dirs, records)]
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     (out / "report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")

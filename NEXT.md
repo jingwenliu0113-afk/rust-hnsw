@@ -65,7 +65,19 @@
 - `8958f33 docs: narrow the deferral to formal, performance-sensitive Mac experiments`
 - `746c1d0 docs: pre-register the formal grid (decision 013) and add the GloVe formal configs`
 - `fbe7f40 feat(benchmarks): add the pre-merge checks and auxiliary scaling reading required by 013`
-- `docs: add the formal-run runbook to NEXT`（本次）
+- `7580224 docs: add the formal-run runbook to NEXT`
+- `fix(benchmarks): close gate-tool gaps found in review`（本次）
+
+## 最近完成：gate 工具的審查（008 / 009 / 010 / 013 補記）
+
+- 三個角度（程式正確性、decision 忠實度、測試鑑別力），findings 由驗證者重現或反駁（tests 角度的驗證者因 session 用量上限中斷，17 個 mutation findings 由主 session 判斷，大多採用）。
+- 主要修正：
+  - `profile.sh` 等 READY 超過 600 秒時會靜默取樣錯誤的階段 → 沒有上限地等，沒有 READY 就失敗。
+  - `idle_load` 會把受污染的量測判成 `exceeds` → 5 分鐘預備期、三條重工作規則、逐樣本紀錄（008 補記）。
+  - `report.py` 可以只交比較有利的 run → formal 報告必須恰好包含 013 §5 的每份 config 各一個 run，並掃描沒交出的 formal run（013 補記）；
+    合併時比對資料集檔案的 SHA-256 與 ground truth 來源。
+  - B1 的措辭改為「決定之前不產生 formal 報告」，footprint 輔助讀值在 010 補記登記。
+- 測試：pytest 467 個。
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -146,12 +158,14 @@
    - **正式 run 的執行手冊**（使用者解除限制、B1 / B2 決定、閒置 load 量測通過之後；每一步都在 repo root）：
      1. `export DEVELOPER_DIR=/Library/Developer/CommandLineTools`（B3 未修好之前）。
      2. 確認 git 乾淨、文字 4 份 config 已 commit；`./scripts/test.sh`（重新編譯 binding，formal 前置檢查要求 binding 晚於 HEAD）。
-     3. 第一次之前：`./tools/with-mac-lock .venv/bin/python -m benchmarks.idle_load`，結果必須是 `ok`。
+     3. 第一次之前：`./tools/with-mac-lock .venv/bin/python -m benchmarks.idle_load`（含 5 分鐘預備期，共約 15 分鐘；008 補記），結果必須是 `ok`。
+        `not_idle`：等其他工作結束再量。`exceeds`：先看紀錄中逐樣本的 %CPU 確認沒有漏判，再記到 Blocked 由使用者決定是否修訂門檻。
      4. 依 013 §5 的建議順序，一次一份：`./tools/with-mac-lock .venv/bin/python -m benchmarks.run benchmarks/configs/<config>.toml --mode formal`
         （GloVe 1 → 8、文字 1 → 4，可交錯）。lock 拿不到（exit 75）就改天再跑，不得刪 lock。
      5. 某份 config 的 run 若是 aborted / invalid / error：整份重跑，原本的 run 之後以 `--excluded` 列出；incomplete 照實保留、不重跑。
-     6. 每個資料集全部 config 跑完後，才產生正式報告：
+     6. 每個資料集全部 config 跑完、而且 B1 已決定之後，才產生正式報告：
         `.venv/bin/python -m benchmarks.report <該資料集全部 run 目錄> --out results/reports/<資料集> [--excluded <失敗的 run>]`。
+        報告會拒絕：缺少或重複的 formal config、同一份 config 另外有沒交出的 complete / incomplete run、沒以 --excluded 列出的失敗 run（013 補記）。
 6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
    - 工具已補齊（009 補記）：`profile.py --dataset <名稱> --n <n>` 與取樣前寫出的 JSON（git、BUILD_INFO、lock 狀態、Recall@10）。
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
@@ -184,8 +198,8 @@
   3. 維持現狀，在報告中註明 Rust 在大 n 時被多算。
 - **為什麼不擋正式 run**：run.json 本來就同時記錄 rss（`index_memory_bytes`）與 footprint（`index_footprint_bytes`），
   這個決定只影響報告的 memory frontier 採用哪個欄位；但必須在看到正式結果**之前**決定，否則會變成看結果選指標。
-  若正式 run 在你決定之前完成：報告的 memory 讀值兩種都列（rss 與 footprint），選擇的依據只能是上面這份與正式結果無關的證據。
-  報告已加上 footprint 的輔助欄位（frontier 與 scaling；主要讀值仍是 rss，未改 008 §8）。
+  **B1 決定之前，不產生、不查看任何 formal 報告**（formal run 可以先跑；010 補記）。
+  報告已加上 footprint 的輔助欄位（frontier 與 scaling；主要讀值仍是 rss，未改 008 §8），已在 010 補記登記；B1 決定後依決定保留或移除。
 - **另外的觀察（不是量測問題）**：同一份暫時副本讓 Rust build 期間的 peak RSS 多出一份資料（真實的實作特性，照實報告）；可能是 Advanced A 的假設之一，Core 不改。
 
 ### B2. 正式 run 的電力條件（新增前置條件屬於修改 008，需要你決定）

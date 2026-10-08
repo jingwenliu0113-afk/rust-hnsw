@@ -333,3 +333,20 @@ runner 實作完成後，以三個角度審查（是否忠實落實 008 / 010、
 比對 lock owner 的 process 名稱或啟動時間（綁死 with-mac-lock 的格式，且情境需要 stale lock 加上 pid 重用）、
 每個子 process 結束就寫一次 run.json（收尾已改為不會失敗，SIGKILL / 斷電屬極端情況）、
 以及 ground truth 計算期間無法立即中止（此時還沒有任何量測，不會遺失資料）。
+
+## 補記（2026-10-09，在任何閒置 load 量測結果之前）：§2 閒置 load 量測的落實
+
+`benchmarks/idle_load.py`（`./tools/with-mac-lock .venv/bin/python -m benchmarks.idle_load`）落實 §2 的量測。門檻 4.0 與「P95 + 1.0」的判定不變；
+審查發現原本的工具會把受污染的量測判成 `exceeds`（進而導向修訂門檻），所以登記以下量測方法：
+
+- **預備期**：量測窗之前先等 300 秒（1 分鐘 load 的時間常數約 60 秒，殘留 ≤ e^-5），讓量測前的工作（例如 `./scripts/test.sh`）衰減；
+  預備期照常記錄 load 與 process，不計入 P50 / P95。之後照 §2 量 10 分鐘（每 15 秒、含起點 41 個樣本）。
+- **「沒有其他重工作」**（預備期與量測窗都算；ps 的 %CPU，100 = 一個 core；自己與祖先 process 除外），任一成立就判 `not_idle`：
+  1. 同一個 pid 的平均 %CPU ≥ 50；
+  2. 同一個 command 合計的平均 %CPU ≥ 100（不斷換 pid 的編譯、同一程式的多個 worker）；
+  3. 同一個 pid 連續 4 個樣本（約 1 分鐘）%CPU ≥ 50（間歇但持續的工作）。
+  不採用「任一樣本的合計 %CPU ≥ 100」：本機的桌面程式（WindowServer、Claude 等）合計就約 140%，formal run 時也同樣存在。
+  多個各自低於門檻的 process 不會被判定，以下一點的逐樣本紀錄事後審查。
+- **逐樣本紀錄**：每個樣本寫下非祖先 process 的 %CPU 合計與前 5 名。`exceeds` 必須先以它們確認沒有漏判的工作，才能作為修訂門檻的依據；
+  修訂門檻本身仍須另寫 decision（屬於使用者決定的事項）。
+- 判定順序：`not_idle` 優先於 `exceeds`。

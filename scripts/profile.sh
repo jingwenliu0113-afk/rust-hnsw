@@ -32,12 +32,11 @@ log="$out/$name.log"
 .venv/bin/python -m benchmarks.profile "$@" --seconds "$((seconds + 3))" --meta "$out/$name.json" >"$log" 2>&1 &
 pid=$!
 
-# 等待要取樣的階段開始（build 可能需要一段時間）。
-for _ in $(seq 1 1200); do
-  if grep -q '^READY' "$log"; then
-    break
-  fi
+# 等待要取樣的階段開始。沒有時間上限：完整 GloVe 的 build 單一實作就要約 10 分鐘，固定上限一到就取樣會取到錯誤的階段（009）。
+# workload 沒有印出 READY 就結束時，以非 0 結束，絕不取樣。
+until grep -q '^READY' "$log"; do
   if ! kill -0 "$pid" 2>/dev/null; then
+    grep -q '^READY' "$log" && break
     echo "workload exited before READY:" >&2
     cat "$log" >&2
     exit 1

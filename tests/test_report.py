@@ -7,6 +7,9 @@ import json
 
 import pytest
 
+import subprocess
+
+from benchmarks import report as report_module
 from benchmarks.report import ReportError, build_report, changed_measurement_files, markdown, write_report
 from benchmarks.run import run
 from test_runner import STUBS, stub_config
@@ -318,8 +321,8 @@ def test_auxiliary_scaling_reads_only_the_fixed_cell():
 
 def test_only_failed_runs_can_be_excluded_and_they_are_listed(tmp_path):
     good, failed = tmp_path / "good", tmp_path / "failed"
-    for directory, record in ((good, make_record([curve("rust-hnsw", RUST_CURVE)])),
-                              (failed, {**make_record([], status="aborted"), "status_reasons": ["SIGTERM"]})):
+    for directory, record in ((good, make_record([curve("rust-hnsw", RUST_CURVE)], mode="smoke")),
+                              (failed, {**make_record([], mode="smoke", status="aborted"), "status_reasons": ["SIGTERM"]})):
         directory.mkdir()
         (directory / "run.json").write_text(json.dumps(record), encoding="utf-8")
     out = write_report([good], tmp_path / "report", excluded=[failed])
@@ -328,6 +331,167 @@ def test_only_failed_runs_can_be_excluded_and_they_are_listed(tmp_path):
     assert "SIGTERM" in (out / "report.md").read_text(encoding="utf-8")
     with pytest.raises(ReportError, match="only aborted"):
         write_report([good], tmp_path / "r2", excluded=[good])  # complete 的 run 不得被排除（避免事後挑選）
+
+
+def test_a_failed_run_after_a_good_one_is_refused():
+    good = make_record([curve("rust-hnsw", RUST_CURVE, seed=1)])
+    bad = make_record([curve("rust-hnsw", RUST_CURVE, seed=2)], status="aborted")
+    with pytest.raises(ReportError, match="aborted"):
+        build_report([good, bad])
+
+
+def test_builds_differing_only_in_ef_construction_are_distinct():
+    # glove-formal-1 的 (16, 200) seed 1 與 glove-formal-2 的 (16, 400) seed 1：合法的合併。
+    a = make_record([curve("rust-hnsw", RUST_CURVE, seed=1, m=16, efc=200)])
+    b = make_record([curve("rust-hnsw", RUST_CURVE, seed=1, m=16, efc=400)])
+    build_report([a, b])
+
+
+def test_the_rust_extension_hash_is_not_a_merge_condition():
+    # binding 每次 formal 前重新編譯，不保證逐位元相同（013 §5）。
+    meta = make_metadata()
+    meta["extension_sha256"]["rust_hnsw"] = "rebuilt-before-formal"
+    build_report([make_record([curve("rust-hnsw", RUST_CURVE, seed=1)]),
+                  make_record([curve("rust-hnsw", RUST_CURVE, seed=2)], metadata=meta)])
+
+
+def test_the_default_commit_comparison_uses_git():
+    first = make_record([curve("rust-hnsw", RUST_CURVE, seed=1)], metadata=make_metadata(commit="cc900e5"))
+    second = make_record([curve("rust-hnsw", RUST_CURVE, seed=2)], metadata=make_metadata(commit="2c8543f"))
+    with pytest.raises(ReportError, match="environment.py"):
+        build_report([first, second])
+
+
+def test_the_diff_is_between_the_two_commits_not_the_worktree():
+    # f37ce6c → cc900e5 只改 report.py；之後的 2c8543f 才改 environment.py。
+    assert changed_measurement_files("f37ce6c", "cc900e5") == []
+
+
+MEASUREMENT_013 = ["crates/hnsw/src/lib.rs", "python/src/lib.rs", "Cargo.toml", "Cargo.lock", "requirements-dev.txt",
+                   *(f"benchmarks/{n}" for n in ("run.py", "run_child.py", "adapters.py", "interface.py", "protocol.py",
+                                                  "evaluate.py", "metrics.py", "environment.py", "datasets.py",
+                                                  "config.py"))]
+
+
+def test_every_path_listed_in_013_is_compared(tmp_path):
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.invalid")
+    git("config", "user.name", "t")
+    for name in [*MEASUREMENT_013, "benchmarks/report.py", "NEXT.md"]:
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("0\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    for name in [*MEASUREMENT_013, "benchmarks/report.py"]:
+        before = git("rev-parse", "HEAD")
+        (tmp_path / name).write_text("1\n")
+        git("commit", "-qam", name)
+        changed = changed_measurement_files(before, git("rev-parse", "HEAD"), repo=tmp_path)
+        assert changed == ([] if name == "benchmarks/report.py" else [name]), name
+
+
+def test_runs_on_different_dataset_files_are_not_merged():
+    first = make_record([curve("rust-hnsw", RUST_CURVE, seed=1)])
+    second = make_record([curve("rust-hnsw", RUST_CURVE, seed=2)])
+    first["dataset"]["files_sha256"] = {"train.npy": "aaaa"}
+    second["dataset"]["files_sha256"] = {"train.npy": "bbbb"}
+    with pytest.raises(ReportError, match="files_sha256"):
+        build_report([first, second])
+    second["dataset"]["files_sha256"] = {"train.npy": "aaaa"}
+    first["subsets"] = {"1000": {"gt_source": {"kind": "frozen", "sha256": "x"}}}
+    second["subsets"] = {"1000": {"gt_source": {"kind": "frozen", "sha256": "y"}}}
+    with pytest.raises(ReportError, match="ground truth"):
+        build_report([first, second])
+
+
+def test_the_auxiliary_cell_needs_both_m_and_efc():
+    center = curve("rust-hnsw", [(10, 0.91, 500.0)], m=16, efc=200)
+    other_efc = curve("rust-hnsw", [(10, 0.92, 900.0)], m=16, efc=400)
+    report = build_report([make_record([center, other_efc])])
+    assert report["aux_scaling_frontier"]["rust-hnsw"]["1000"]["0.90"]["main"]["qps"]["value"] == 500.0
+
+
+def test_the_auxiliary_reading_excludes_flagged_points_and_lists_both_values():
+    child = make_child("rust-hnsw", [make_point(10, 0.91, 500.0), make_point(20, 0.93, 900.0, flags=("load",))],
+                       m=16, efc=200)
+    report = build_report([make_record([child])])
+    entry = report["aux_scaling_frontier"]["rust-hnsw"]["1000"]["0.90"]
+    assert entry["main"]["qps"]["value"] == 500.0 and entry["all_points"]["qps"]["value"] == 900.0 and entry["differs"]
+    assert "包含被標記點的輔助讀值" in markdown(report) and "900 @" in markdown(report)
+
+
+def test_the_auxiliary_reading_differs_only_on_qps_and_latency():
+    # 只有記憶體讀值不同時，輔助表（只有 QPS / P50 / P95）不得標示「改變」。
+    clean = make_child("rust-hnsw", [make_point(10, 0.91, 500.0)], m=16, efc=200, index_memory=2e8)
+    flagged = make_child("rust-hnsw", [make_point(10, 0.91, 500.0)], m=16, efc=200, seed=2, index_memory=1e8,
+                         flags=("memory",))
+    report = build_report([make_record([clean, flagged])])
+    assert report["frontier"]["rust-hnsw"]["1000"]["0.90"]["differs"] is True
+    assert report["aux_scaling_frontier"]["rust-hnsw"]["1000"]["0.90"]["differs"] is False
+
+
+def test_the_cli_lists_excluded_runs(tmp_path):
+    good, failed = tmp_path / "good", tmp_path / "failed"
+    for directory, record in ((good, make_record([curve("rust-hnsw", RUST_CURVE)], mode="smoke")),
+                              (failed, {**make_record([], mode="smoke", status="aborted"), "status_reasons": ["SIGTERM"]})):
+        directory.mkdir()
+        (directory / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    report_module.main([str(good), "--out", str(tmp_path / "out"), "--excluded", str(failed)])
+    report = json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
+    assert [e["status"] for e in report["excluded_runs"]] == ["aborted"]
+
+
+# ---- 013 §5：formal 報告必須恰好包含每一份 formal config 各一個 run ----
+
+GLOVE = "glove-100-angular"
+
+
+def formal_run(directory, config, seed, status="complete"):
+    record = make_record([curve("rust-hnsw", RUST_CURVE, seed=seed)], dataset=GLOVE, status=status)
+    record["metadata"]["formal_checks"] = {"config": {"path": config, "blob": "b" * 40}}
+    record["config"] = {"path": config}
+    directory.mkdir(parents=True)
+    (directory / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    return directory
+
+
+def full_formal_set(root):
+    return [formal_run(root / f"r{i}", path, seed=i + 1)
+            for i, path in enumerate(report_module.FORMAL_CONFIGS[GLOVE])]
+
+
+def test_a_formal_report_needs_every_formal_config_exactly_once(tmp_path):
+    runs = full_formal_set(tmp_path / "runs")
+    out = write_report(runs, tmp_path / "report", roots=[tmp_path / "runs"])
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert [c["config"] for c in report["run_configs"]] == list(report_module.FORMAL_CONFIGS[GLOVE])
+    with pytest.raises(ReportError, match="exactly one"):
+        write_report(runs[:-1], tmp_path / "r2", roots=[tmp_path / "runs"])
+
+
+def test_a_second_completed_run_of_a_formal_config_cannot_be_dropped(tmp_path):
+    runs = full_formal_set(tmp_path / "runs")
+    formal_run(tmp_path / "runs" / "again", report_module.FORMAL_CONFIGS[GLOVE][0], seed=99)
+    with pytest.raises(ReportError, match="cannot be replaced or dropped"):
+        write_report(runs, tmp_path / "report", roots=[tmp_path / "runs"])
+
+
+def test_a_failed_formal_run_must_be_listed_as_excluded(tmp_path):
+    runs = full_formal_set(tmp_path / "runs")
+    failed = formal_run(tmp_path / "runs" / "failed", report_module.FORMAL_CONFIGS[GLOVE][0], seed=98, status="aborted")
+    with pytest.raises(ReportError, match="--excluded"):
+        write_report(runs, tmp_path / "report", roots=[tmp_path / "runs"])
+    write_report(runs, tmp_path / "report", excluded=[failed], roots=[tmp_path / "runs"])
+
+
+def test_a_run_of_an_unregistered_config_is_not_a_formal_result(tmp_path):
+    runs = full_formal_set(tmp_path / "runs")
+    extra = formal_run(tmp_path / "runs" / "probe", "benchmarks/configs/glove-correctness.toml", seed=50)
+    with pytest.raises(ReportError, match="not a formal config"):
+        write_report([*runs, extra], tmp_path / "report", roots=[tmp_path / "runs"])
 
 
 def test_report_on_a_real_runner_output(tmp_path):

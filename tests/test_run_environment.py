@@ -384,6 +384,19 @@ def test_power_mode_adapter_and_battery_are_parsed():
     assert environment.parse_battery("Now drawing from 'AC Power'\n") is None
 
 
+def test_power_state_parses_each_field_from_its_own_command(monkeypatch):
+    # 每個 child 的 snapshot 不保存原始 pmset 文字，接線錯了事後無法還原（NEXT.md B2 依賴這些紀錄）。
+    outputs = {
+        ("pmset", "-g"): "Currently in use:\n lowpowermode         1\n powermode            2\n",
+        ("pmset", "-g", "batt"): "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t93%; charging; 0:30 remaining\n",
+        ("pmset", "-g", "ac"): " Wattage = 68W\n Current = 3390mA\n",
+    }
+    monkeypatch.setattr(environment, "_run", lambda *args, **kwargs: outputs[args])
+    state = environment.power_state()
+    assert (state["power_source"], state["powermode"], state["adapter_watts"], state["battery"]) == \
+        ("AC Power", 2, 68, {"percent": 93, "state": "charging"})
+
+
 def test_phys_footprint_tracks_new_allocations():
     before = environment.phys_footprint_bytes()
     block = np.ones(32 * 2**20 // 8)

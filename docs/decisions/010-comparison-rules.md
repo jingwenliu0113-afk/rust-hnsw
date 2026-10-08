@@ -91,3 +91,10 @@ EXPERIMENT_RULES 要求 same recall region、多次重跑、報告 variance。
 
 - 第一次 formal run 之前，formal config 必須列出完整 variance 的格點與 ef 格點，並 commit。
 - 報告的主要圖表依第 2 點產生；任何偏離本文件的分析都必須另寫 decision log，並標明是在看到結果之後。
+
+## 補記（2026-10-09，在任何正式結果之前）：index footprint 的輔助讀值
+
+- 報告在 recall–memory frontier 與 scaling 的表中，另列 `index_footprint_bytes`（phys_footprint 的增量）的讀值，作為輔助欄位。
+  原因：macOS 上已釋放的大型配置仍算在 rss（reusable page），Rust 在大 n 時的 `index_memory_bytes` 會被多算約一份資料（NEXT.md B1）。
+- 主要讀值不變：仍依 008 §8 / 本文件第 2 點使用 `index_memory_bytes`。是否改用 footprint 由使用者決定（B1），必須在看到任何正式結果之前決定；
+  B1 決定之前，不產生、不查看任何 formal 報告（formal run 可以先跑）。決定之後依決定保留或移除這個輔助欄位。

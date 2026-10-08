@@ -292,8 +292,23 @@
   3. 多個 run 合併時，hnswlib / faiss 擴充模組的 SHA-256、套件版本、`rust_hnsw.BUILD_INFO` 必須相同；commit 不同時，
      以 `git diff` 確認 §5 列出的實作與量測程式沒有差異；
   4. 輔助 scaling 讀值（每個 n 只用 (16, 200) 的點，報告中另列一節）。
-- 失敗的 run 以 `--excluded <run 目錄>` 只列出狀態與原因（資料不合併）；只有 aborted / invalid / error 的 run 可以被排除，
-  complete / incomplete 的 run 不得排除，避免事後挑選。
+- 失敗的 run 以 `--excluded <run 目錄>` 只列出狀態與原因（資料不合併）；只有 aborted / invalid / error 的 run 可以被排除。
+
+## 補記（2026-10-09，gate 工具的審查，在任何正式結果之前）
+
+以程式正確性、decision 忠實度、測試鑑別力三個角度審查上一則補記的工具，並修正：
+
+- **事後挑選的漏洞**：上一則補記說「complete 的 run 不得以 --excluded 排除，避免事後挑選」，這個說法不成立：直接不把某個 run 交給報告，
+  效果一樣，而且不留痕跡（同一份 config 跑兩次都 complete，可以只交比較有利的那一個；也可以只交部分 config）。改為 formal 報告另外檢查：
+  1. 交給報告的 run 的 config（formal 前置檢查記下的 repo 相對路徑）必須恰好是該資料集在 §5 的全部 formal config，每份一個 run；
+     缺少、重複或不在清單中都拒絕（清單登記在 `benchmarks/report.py` 的 `FORMAL_CONFIGS`，與 §5 的表相同）。
+  2. 掃描 `results/runs/` 與所給 run 的上層目錄：同一資料集、同一份 formal config、但沒有交給報告的 formal run，
+     complete / incomplete 的一律拒絕（010 §3：已完成的 formal run 不得以重跑取代或略過）；aborted / invalid / error 的必須以 `--excluded` 列出。
+  3. 報告記錄每個 run 的 config 路徑與 git blob。
+  smoke 報告不做這些檢查。
+- **資料集身分**：合併的 run 之間，資料集紀錄（name、kind、n_train、n_queries、dim、metric、各檔案的 SHA-256）與共同 n 的 ground truth 來源
+  必須完全相同。原本只比對名稱，同名資料集在兩次 formal run 之間重新準備時會被合併。
+- **輔助 scaling 讀值**：「排除標記點是否改變讀值」只比較 QPS / P50 / P95 的數值與所在的點（§4 的定義）；改變時另列包含被標記點的讀值（010 §3）。
 
 ## 附錄：文字的 formal config（逐字登記）
 

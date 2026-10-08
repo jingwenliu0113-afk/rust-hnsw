@@ -55,3 +55,9 @@ SPEC 的 Gate 要求「profiler 已顯示時間主要花在哪」。Advanced 的
 - search 階段另以一次不計時的 k = 10 search 計算 Recall@10（id-based，003），記在同一個 JSON。
   「相近的 Recall@K」以這個值判斷：各實作的 ef 由正式 run 的結果選出，取樣時再確認一次。
 - 仍然不輸出任何 latency / QPS 數字。
+
+## 補記（2026-10-09，gate 工具的審查）
+
+- `scripts/profile.sh` 原本最多等 600 秒的 READY，逾時會**靜默地**對 READY 之前的階段（資料載入、frozen GT 驗證、build）取樣並以 0 結束。
+  完整 GloVe 的 build 單一實作就約 600 秒，所以這條路徑在 Gate 證據的實際使用中走得到。改為沒有上限地等到 READY；
+  workload 沒有印出 READY 就結束時，以非 0 結束，絕不取樣。
