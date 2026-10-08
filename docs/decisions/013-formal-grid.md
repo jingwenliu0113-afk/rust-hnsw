@@ -284,6 +284,17 @@
   - 文字 4 份 TOML 的 commit。
 - NEXT 的 B1（index memory 的定義）要在看到正式結果之前決定，B2（電力條件）要在 formal run 之前決定；兩者都與格點無關。
 
+## 補記（2026-10-09，在任何正式結果之前）
+
+- §5 要求的四項 `report.py` 檢查已實作並測試（`tests/test_report.py`）：
+  1. 只接受 `complete` / `incomplete` 的 run；
+  2. 同一個（實作, n, M, efC, seed, shuffle）出現在多個 run 時拒絕；
+  3. 多個 run 合併時，hnswlib / faiss 擴充模組的 SHA-256、套件版本、`rust_hnsw.BUILD_INFO` 必須相同；commit 不同時，
+     以 `git diff` 確認 §5 列出的實作與量測程式沒有差異；
+  4. 輔助 scaling 讀值（每個 n 只用 (16, 200) 的點，報告中另列一節）。
+- 失敗的 run 以 `--excluded <run 目錄>` 只列出狀態與原因（資料不合併）；只有 aborted / invalid / error 的 run 可以被排除，
+  complete / incomplete 的 run 不得排除，避免事後挑選。
+
 ## 附錄：文字的 formal config（逐字登記）
 
 與 `simplewiki-embeddinggemma2-100k` 的 manifest 同一個 commit 加入 `benchmarks/configs/`，內容必須與以下完全相同（唯一例外：依第 6 點上調的 `child_timeout_s`）。

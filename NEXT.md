@@ -63,7 +63,8 @@
 - `cc900e5 feat(benchmarks): report index footprint next to index memory`
 - `2c8543f feat(benchmarks): record power mode, adapter wattage and battery state`
 - `8958f33 docs: narrow the deferral to formal, performance-sensitive Mac experiments`
-- `docs: pre-register the formal grid (decision 013) and add the GloVe formal configs`（本次）
+- `746c1d0 docs: pre-register the formal grid (decision 013) and add the GloVe formal configs`
+- `feat(benchmarks): add the pre-merge checks and auxiliary scaling reading required by 013`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -137,7 +138,7 @@
    - 12 份 config、38 個 build、負載下上限約 19.2 h（GloVe 11.3 h、文字 7.9 h），每份 0.3–2.6 h。
    - GloVe 的 8 份已 commit；文字的 4 份逐字登記在 013 附錄，與 `simplewiki-embeddinggemma2-100k` 的 manifest 同一個 commit 加入。
    - **第一次 formal run 之前還必須完成**：
-     - （可以自己做）`report.py` 的四項檢查（013 §5）：拒絕跨 run 重複的 build、拒絕 aborted / invalid / error 的 run、
+     - （已完成，013 補記）`report.py` 的四項檢查：拒絕跨 run 重複的 build、拒絕 aborted / invalid / error 的 run（以 `--excluded` 列出）、
        合併前的版本一致檢查、輔助的 (16, 200)-only scaling 讀值。
      - （可以自己做）文字 4 份 config 的 commit（等 manifest）。
      - （Deferred / Blocked）閒置 load 量測、B1、B2、使用者解除今晚的限制。

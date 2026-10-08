@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from benchmarks.report import ReportError, build_report, markdown, write_report
+from benchmarks.report import ReportError, build_report, changed_measurement_files, markdown, write_report
 from benchmarks.run import run
 from test_runner import STUBS, stub_config
 
@@ -35,9 +35,16 @@ def make_child(impl, points, n=1000, m=16, efc=100, seed=1, shuffle=None, flags=
             "points": list(points)}
 
 
-def make_record(children, mode="formal", dataset="d"):
-    return {"mode": mode, "status": "complete", "dataset": {"name": dataset}, "protocol": {"version": "008-v1"},
-            "children": children}
+def make_metadata(commit="c" * 40, hnswlib_sha="h", faiss_sha="f", versions=None, build_info=None):
+    return {"extension_sha256": {"rust_hnsw": "r", "hnswlib": hnswlib_sha, "faiss": faiss_sha},
+            "versions": versions or {"hnswlib": "0.8.0", "faiss-cpu": "1.15.1"},
+            "build_info": build_info or {"profile": "release", "opt_level": "3"}, "git": {"commit": commit}}
+
+
+def make_record(children, mode="formal", dataset="d", status="complete", metadata=None):
+    return {"mode": mode, "status": status, "status_reasons": [], "dataset": {"name": dataset},
+            "protocol": {"version": "008-v1"}, "children": children,
+            "metadata": make_metadata() if metadata is None else metadata}
 
 
 RUST_CURVE = [(10, 0.85, 1000.0), (20, 0.92, 800.0), (40, 0.96, 500.0), (80, 0.985, 300.0)]
@@ -245,6 +252,82 @@ def test_runs_with_different_modes_or_datasets_are_not_mixed():
         build_report([make_record([], dataset="a"), make_record([], dataset="b")])
     with pytest.raises(ReportError, match="no runs"):
         build_report([])
+
+
+# ---- 013 §5：合併多個 run 之前的檢查 ----
+
+
+@pytest.mark.parametrize("status", ["aborted", "invalid", "error", "running"])
+def test_failed_runs_are_refused(status):
+    with pytest.raises(ReportError, match=status):
+        build_report([make_record([curve("rust-hnsw", RUST_CURVE)], status=status)])
+
+
+def test_incomplete_runs_are_reported():
+    report = build_report([make_record([curve("rust-hnsw", RUST_CURVE)], status="incomplete")])
+    assert report["run_status"] == ["incomplete"]
+
+
+def test_a_build_repeated_across_runs_is_refused():
+    # 失敗的 run 與它的重跑不得一起合併：同一個 build 會被當成兩個 build 取 median。
+    first = make_record([curve("rust-hnsw", RUST_CURVE, seed=1)])
+    rerun = make_record([curve("rust-hnsw", RUST_CURVE, seed=1)])
+    with pytest.raises(ReportError, match="appears in both"):
+        build_report([first, rerun], labels=["a", "b"])
+    other_seed = make_record([curve("rust-hnsw", RUST_CURVE, seed=2)])
+    assert build_report([first, other_seed])["frontier"]["rust-hnsw"]["1000"]["0.90"]["main"]["qps"]["builds"] == 2
+
+
+@pytest.mark.parametrize("metadata, field", [
+    (make_metadata(hnswlib_sha="other"), "hnswlib"),
+    (make_metadata(faiss_sha="other"), "faiss"),
+    (make_metadata(versions={"hnswlib": "0.8.1", "faiss-cpu": "1.15.1"}), "versions"),
+    (make_metadata(build_info={"profile": "debug", "opt_level": "0"}), "BUILD_INFO"),
+])
+def test_runs_built_from_different_libraries_are_not_merged(metadata, field):
+    first = make_record([curve("rust-hnsw", RUST_CURVE, seed=1)])
+    second = make_record([curve("rust-hnsw", RUST_CURVE, seed=2)], metadata=metadata)
+    with pytest.raises(ReportError, match=field):
+        build_report([first, second])
+
+
+def test_runs_from_different_commits_merge_only_without_code_changes():
+    first = make_record([curve("rust-hnsw", RUST_CURVE, seed=1)], metadata=make_metadata(commit="a" * 40))
+    second = make_record([curve("rust-hnsw", RUST_CURVE, seed=2)], metadata=make_metadata(commit="b" * 40))
+    build_report([first, second], changed_files=lambda a, b: [])
+    with pytest.raises(ReportError, match="benchmarks/run.py"):
+        build_report([first, second], changed_files=lambda a, b: ["benchmarks/run.py"])
+
+
+def test_changed_measurement_files_compares_real_commits():
+    # cc900e5 → 2c8543f 改了 environment.py（記錄電力狀態）；8958f33 → 746c1d0 只改文件與 config。
+    assert changed_measurement_files("cc900e5", "2c8543f") == ["benchmarks/environment.py"]
+    assert changed_measurement_files("8958f33", "746c1d0") == []
+    with pytest.raises(ReportError, match="cannot compare"):
+        changed_measurement_files("0" * 40, "746c1d0")
+
+
+def test_auxiliary_scaling_reads_only_the_fixed_cell():
+    center = curve("rust-hnsw", [(10, 0.91, 500.0)], m=16, efc=200)
+    better = curve("rust-hnsw", [(10, 0.92, 900.0)], m=32, efc=200)
+    report = build_report([make_record([center, better])])
+    assert report["frontier"]["rust-hnsw"]["1000"]["0.90"]["main"]["qps"]["value"] == 900.0
+    assert report["aux_scaling_frontier"]["rust-hnsw"]["1000"]["0.90"]["main"]["qps"]["value"] == 500.0
+    assert "輔助 scaling 讀值" in markdown(report)
+
+
+def test_only_failed_runs_can_be_excluded_and_they_are_listed(tmp_path):
+    good, failed = tmp_path / "good", tmp_path / "failed"
+    for directory, record in ((good, make_record([curve("rust-hnsw", RUST_CURVE)])),
+                              (failed, {**make_record([], status="aborted"), "status_reasons": ["SIGTERM"]})):
+        directory.mkdir()
+        (directory / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    out = write_report([good], tmp_path / "report", excluded=[failed])
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert report["excluded_runs"] == [{"run": str(failed), "status": "aborted", "status_reasons": ["SIGTERM"]}]
+    assert "SIGTERM" in (out / "report.md").read_text(encoding="utf-8")
+    with pytest.raises(ReportError, match="only aborted"):
+        write_report([good], tmp_path / "r2", excluded=[good])  # complete 的 run 不得被排除（避免事後挑選）
 
 
 def test_report_on_a_real_runner_output(tmp_path):
