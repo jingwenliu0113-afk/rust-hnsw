@@ -178,8 +178,9 @@
 - 因此 deferred（不等待，改做其他 Core 工作）：
   - 所有 formal run（GloVe 與文字的 formal config 會照常寫好並 commit，但不執行）。
   - lock 下作為 Gate 證據的 profiling。
-- 閒置 load 量測（`benchmarks.idle_load`）本身不是效能量測，但它是 formal run 的前置條件，而且需要 heavy lock 空出來、沒有其他重工作：
-  目前 lock 由 llm-serving-lab 持有、本專案的 embedding 也在跑，所以照第 3 項的狀態繼續 blocked；條件具備時可以量（結果另外標註當時的電力狀態）。
+- 閒置 load 量測（`benchmarks.idle_load`）也延後到解除限制、B2 決定之後：它的結果用來確認 formal run 的 load 門檻，
+  應該在 formal run 實際採用的電力條件下量（今晚是自動電力模式、68W）；只需約 15 分鐘，不影響其他工作。
+  （2026-10-09 02:46 機器的 load 曾降到約 2.5，但因上述理由沒有量。）
 
 ## Blocked / 需要使用者決定
 
