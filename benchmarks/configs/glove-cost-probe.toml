@@ -1,0 +1,22 @@
+# 正式格點設計前的成本與 recall 涵蓋範圍探測（smoke 模式；decision 008 §1）。
+# 只量最貴的角落（n = 100k 的 M = 48、efC = 400，以及完整 1,183,514 的 build），用來估算正式 run 的時間，
+# 並確認 0.99 的 Recall@10 是否在 ef ≤ 1024 內可以達到。計時不在 lock 下量測，不得用於任何效能結論。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [64, 128, 256, 512, 1024]
+child_timeout_s = 10800
+
+[[sweep]]
+n = [100000]
+m = [48]
+ef_construction = [400]
+seeds = [1]
+shuffles = []
+
+[[sweep]]
+n = [1183514]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = []

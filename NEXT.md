@@ -11,7 +11,14 @@
   （`text_corpus.py`、`embed_text.py`、`prepare_text.py`）已實作並測試。
 - 資料準備程式經過兩個角度的審查（19 個 findings，採用 8 個、駁回 11 個，摘要見 011 文末）。最重要的一項：embedding 改用 batch size 1，
   因為原本的重現性檢查在 batch 32 下必然失敗（padding 造成約 2e-7 的差），第一次文字 pilot 已因此中止。
-- 進行中：以修正後的程式重新產生 EmbeddingGemma 2 的 pilot（10,000 base + 1,000 query）與 glove-100-angular（新的 manifest 格式，並順便確認重跑結果逐位元相同）。
+- 兩個資料集已登記：`glove-100-angular`（重跑後 6 個檔案逐位元相同）與 `simplewiki-embeddinggemma2-pilot`。
+- **真實資料上的 correctness 已通過**（SPEC Core 3、Week 1 第 6、7 項；smoke 模式，不作效能結論）：
+  - GloVe n = 100k、M = 16、efC = 200、ef 10–256（`results/runs/20261008T142627Z-smoke`）：三者 Recall@10 都單調上升，ef = 10 約 0.55、ef = 256 約 0.95；
+    Rust 與 hnswlib 的曲線幾乎重疊（每個 ef 的差最大約 0.0014）。
+  - 文字 pilot n = 10k（`results/runs/20261008T143953Z-smoke`）：三者都單調上升，ef = 64 約 0.98、ef = 256 約 0.999。
+  - 兩者都沒有結果不足 k、沒有重跑或 batch / single 不一致，frozen ground truth 驗證後使用。圖在各 run 的 `report/`（results/ 不進 Git）。
+- decision 012：正式文字 workload 為 `simplewiki-embeddinggemma2-100k`（base 100,000、query 2,000、登記 n = 10k / 30k / 100k）。
+- 進行中：產生 100k 文字資料集（背景，約 3 小時）；GloVe 的成本探測（`glove-cost-probe.toml`，smoke），作為正式格點 decision 的依據。
 
 尚未進 Advanced（Gate 條件都還沒有資料可判斷），沒有做任何 Optional。
 
@@ -35,7 +42,11 @@
 - `beb8fd5 docs: record dataset proposal and idle-load attempt in NEXT`
 - `0cd4e50 fix(benchmarks): harden runner after implementation review`
 - `4478926 feat(datasets): add GloVe and EmbeddingGemma 2 dataset preparation`
-- `fix(datasets): make embeddings independent of batch composition and bind frozen ground truth to the vectors`（本次）
+- `9c2fe2a fix(datasets): make embeddings independent of batch composition and bind frozen ground truth to the vectors`
+- `ead811f fix(datasets): record the preparation environment when preparation starts`
+- `433a61f feat(datasets): register glove-100-angular with frozen ground truth`
+- `3882eca feat(datasets): register the EmbeddingGemma 2 text pilot`
+- `docs: decide the formal text workload scale and add the GloVe cost probe`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -97,9 +108,12 @@
      train / queries / neighbors 與三個 frozen ground truth 共 6 個檔案的 SHA-256 與第一次完全相同（準備約 466 秒，peak RSS 約 3.1 GB）。
    - pilot 已登記（manifest 與 `text-pilot-correctness.toml` 同一個 commit）：base 10,000、query 1,000、frozen ground truth n = 10,000；
      batch size 1 下 base 約 1,124 秒、query 約 108 秒（機器 load 約 9–12，約 9 筆/秒），token 數最多 386、平均約 98，去重移除 6 段。
-   - 之後：在兩個資料集上跑 correctness 用的 smoke run（recall vs efSearch，不作效能結論）。
-   - pilot 之後：另寫 decision 決定正式文字 workload 的規模（N 與登記的 n）。
-5. **第一張 recall vs efSearch 圖與正式 run**（formal config 先 commit，依 010 列出 variance 格點）。
+   - （已完成）兩個資料集上的 correctness run 與第一張 recall vs efSearch 圖（見「目前位置」）。
+   - （已完成）decision 012：正式文字 workload 的規模。進行中：產生 `simplewiki-embeddinggemma2-100k`，完成後與它的 manifest 一起 commit。
+5. **正式格點的 decision 與 formal config**（依 010 列出 variance 格點與 ef 格點，先 commit 再跑）：
+   - 依據 GloVe 成本探測（n = 100k 的 M = 48、efC = 400，ef 到 1024；n = 1,183,514 的 build）與 correctness run 的 recall 涵蓋範圍。
+     只使用 recall 涵蓋範圍與成本，不使用 smoke 的實作間效能差異；三個實作用同一組格點。
+   - 正式 run 需要 heavy lock 與閒置的機器（第 3 項）。
 6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
 
 ## Blocked / 需要使用者決定
