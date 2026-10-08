@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from benchmarks.report import ReportError, build_report, write_report
+from benchmarks.report import ReportError, build_report, markdown, write_report
 from benchmarks.run import run
 from test_runner import STUBS, stub_config
 
@@ -26,11 +26,12 @@ def make_point(ef, recall10, qps, p50=1000.0, p95=2000.0, recall1=None, flags=()
 
 
 def make_child(impl, points, n=1000, m=16, efc=100, seed=1, shuffle=None, flags=(), status="ok",
-               build_ns=1e9, peak=2e9, index_memory=1e8):
+               build_ns=1e9, peak=2e9, index_memory=1e8, index_footprint=None):
     return {"child_id": f"{impl}-{n}-{m}-{efc}-{seed}-{shuffle}", "implementation": impl, "status": status,
             "partial": status != "ok" and bool(points), "flags": list(flags),
             "build": {"n": n, "m": m, "ef_construction": efc, "seed": seed, "shuffle": shuffle, "build_ns": build_ns,
-                      "peak_rss_bytes": peak, "index_memory_bytes": index_memory},
+                      "peak_rss_bytes": peak, "index_memory_bytes": index_memory,
+                      "index_footprint_bytes": index_memory if index_footprint is None else index_footprint},
             "points": list(points)}
 
 
@@ -75,6 +76,19 @@ def test_latency_and_memory_readings_take_the_minimum():
     assert (reading["p50_ns"]["value"], reading["p50_ns"]["m"]) == (900.0, 16)
     assert (reading["p95_ns"]["value"], reading["p95_ns"]["m"]) == (1500.0, 8)
     assert (reading["index_memory_bytes"]["value"], reading["index_memory_bytes"]["m"]) == (2e8, 8)
+
+
+def test_index_footprint_is_an_auxiliary_reading_next_to_index_memory():
+    # rss 多算了已釋放的 page（NEXT.md B1）：主要讀值仍取 rss，footprint 另列，兩者各自取最小值。
+    a = make_child("rust-hnsw", [make_point(10, 0.95, 500.0)], index_memory=5e8, index_footprint=3e8)
+    b = make_child("rust-hnsw", [make_point(10, 0.96, 400.0)], m=8, index_memory=4e8, index_footprint=3.5e8)
+    report = build_report([make_record([a, b])])
+    reading = report["frontier"]["rust-hnsw"]["1000"]["0.95"]["main"]
+    assert (reading["index_memory_bytes"]["value"], reading["index_memory_bytes"]["m"]) == (4e8, 8)
+    assert (reading["index_footprint_bytes"]["value"], reading["index_footprint_bytes"]["m"]) == (3e8, 16)
+    assert {s["index_footprint_bytes"]["median"] for s in report["scaling"]} == {3e8, 3.5e8}
+    text = markdown(report)
+    assert "index footprint (MiB)" in text and "286.1 @ M=16" in text
 
 
 def test_each_point_uses_the_median_over_seeds_of_the_original_order():

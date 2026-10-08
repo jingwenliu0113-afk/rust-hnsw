@@ -58,7 +58,8 @@
 - `693ba51 chore(benchmarks): rerun the full-size half of the GloVe cost probe`
 - `ddf0fd1 docs: record the reusable-page bias in index memory as a blocked decision`
 - `04a68d8 feat(benchmarks): add the idle-load baseline measurement required before formal runs`
-- `docs: update README with real-data correctness and the new tools`（本次）
+- `f37ce6c docs: update README with real-data correctness and the new tools`
+- `feat(benchmarks): report index footprint next to index memory`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -153,6 +154,7 @@
 - **為什麼不擋正式 run**：run.json 本來就同時記錄 rss（`index_memory_bytes`）與 footprint（`index_footprint_bytes`），
   這個決定只影響報告的 memory frontier 採用哪個欄位；但必須在看到正式結果**之前**決定，否則會變成看結果選指標。
   若正式 run 在你決定之前完成：報告的 memory 讀值兩種都列（rss 與 footprint），選擇的依據只能是上面這份與正式結果無關的證據。
+  報告已加上 footprint 的輔助欄位（frontier 與 scaling；主要讀值仍是 rss，未改 008 §8）。
 - **另外的觀察（不是量測問題）**：同一份暫時副本讓 Rust build 期間的 peak RSS 多出一份資料（真實的實作特性，照實報告）；可能是 Advanced A 的假設之一，Core 不改。
 
 ## 需要留意

@@ -6,6 +6,8 @@
 - 主要比較：每個（實作、n）以所有 (M, efC, ef) 點組成 frontier，每個點取跨 seed 的 median（只用原始插入順序）；
   對每個目標 recall，在 median Recall@10 ≥ 目標的點中取 QPS 最高、P50 / P95 最低、index memory 最低。不內插、不外推。
 - 有 hygiene 標記的點不進入主要讀值；若排除與否會改變讀值，兩者都保留（010 §3）。
+- index memory 另列 phys_footprint 的讀值作為輔助欄位：macOS 上已釋放的大型配置仍算在 rss（NEXT.md B1，待使用者決定），
+  主要讀值仍是 008 §8 的 `index_memory_bytes`。
 - smoke 的報告只用來驗證工具本身，不得用於任何結論。
 """
 
@@ -23,9 +25,9 @@ BASELINE = "rust-hnsw"
 ORDER_NOTE = {
     "faiss-hnsw": "FAISS 的實際插入順序不是 row 順序（007 §5）：打亂 row 只改變 id 與 level 的對應，意義與另外兩者不同，不並列比較。",
 }
-METRICS = ("recall10", "tie10", "recall1", "tie1", "qps", "p50_ns", "p95_ns", "index_memory_bytes", "build_ns",
-           "peak_rss_bytes")
-BUILD_METRICS = ("build_ns", "peak_rss_bytes", "index_memory_bytes")
+METRICS = ("recall10", "tie10", "recall1", "tie1", "qps", "p50_ns", "p95_ns", "index_memory_bytes",
+           "index_footprint_bytes", "build_ns", "peak_rss_bytes")
+BUILD_METRICS = ("build_ns", "peak_rss_bytes", "index_memory_bytes", "index_footprint_bytes")
 
 
 class ReportError(ValueError):
@@ -72,6 +74,7 @@ def point_rows(records: list[dict]) -> list[dict]:
                     "p50_ns": k10["latency"]["p50_ns"] if ok else None,
                     "p95_ns": k10["latency"]["p95_ns"] if ok else None,
                     "index_memory_bytes": build.get("index_memory_bytes"),
+                    "index_footprint_bytes": build.get("index_footprint_bytes"),
                     "build_ns": build.get("build_ns"),
                     "peak_rss_bytes": build.get("peak_rss_bytes"),
                     "flags": flags,
@@ -115,7 +118,8 @@ def _reading(aggregates: list[dict], target: float) -> dict:
                 "ef_search": chosen["ef_search"], "incomplete": chosen["incomplete"], "builds": chosen["builds"]}
 
     return {"reached": True, "qps": pick("qps", max), "p50_ns": pick("p50_ns", min), "p95_ns": pick("p95_ns", min),
-            "index_memory_bytes": pick("index_memory_bytes", min)}
+            "index_memory_bytes": pick("index_memory_bytes", min),
+            "index_footprint_bytes": pick("index_footprint_bytes", min)}
 
 
 def frontier(all_aggregates: list[dict], clean_aggregates: list[dict]) -> dict:
@@ -294,26 +298,31 @@ def markdown(report: dict) -> str:
     lines += [f"- 協定：{report['protocol']}；run 狀態：{', '.join(report['run_status'])}",
               "- 規則：decision 010（id-based Recall@10、跨 seed median、不內插、不外推；被標記的點不進入主要讀值）。", ""]
 
-    lines += ["## Frontier（主要讀值）", "", "| 實作 | n | 目標 | QPS | P50 (µs) | P95 (µs) | index memory (MiB) | 排除標記點是否改變讀值 |",
-              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    lines += ["## Frontier（主要讀值）", "",
+              "index footprint 是輔助欄位（phys_footprint；不含已釋放但仍算在 rss 的 page，見 NEXT.md B1），主要讀值仍是 index memory（rss）。", "",
+              "| 實作 | n | 目標 | QPS | P50 (µs) | P95 (µs) | index memory (MiB) | index footprint (MiB) | 排除標記點是否改變讀值 |",
+              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for impl, per_n in sorted(report["frontier"].items()):
         for n, per_target in sorted(per_n.items(), key=lambda item: int(item[0])):
             for target, entry in per_target.items():
                 main = entry["main"]
                 lines.append(f"| {impl} | {n} | {target} | {_reading_cell(main, 'qps', 1, 0)} | "
                              f"{_reading_cell(main, 'p50_ns', 1e3, 1)} | {_reading_cell(main, 'p95_ns', 1e3, 1)} | "
-                             f"{_reading_cell(main, 'index_memory_bytes', 2**20, 1)} | {'是' if entry['differs'] else '否'} |")
+                             f"{_reading_cell(main, 'index_memory_bytes', 2**20, 1)} | "
+                             f"{_reading_cell(main, 'index_footprint_bytes', 2**20, 1)} | {'是' if entry['differs'] else '否'} |")
     differing = [(impl, n, target, entry["all_points"])
                  for impl, per_n in sorted(report["frontier"].items())
                  for n, per_target in sorted(per_n.items(), key=lambda item: int(item[0]))
                  for target, entry in per_target.items() if entry["differs"]]
     if differing:
         lines += ["", "## 包含被標記點的讀值（只列出與主要讀值不同者，010 §3）", "",
-                  "| 實作 | n | 目標 | QPS | P50 (µs) | P95 (µs) | index memory (MiB) |", "| --- | --- | --- | --- | --- | --- | --- |"]
+                  "| 實作 | n | 目標 | QPS | P50 (µs) | P95 (µs) | index memory (MiB) | index footprint (MiB) |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- |"]
         for impl, n, target, reading in differing:
             lines.append(f"| {impl} | {n} | {target} | {_reading_cell(reading, 'qps', 1, 0)} | "
                          f"{_reading_cell(reading, 'p50_ns', 1e3, 1)} | {_reading_cell(reading, 'p95_ns', 1e3, 1)} | "
-                         f"{_reading_cell(reading, 'index_memory_bytes', 2**20, 1)} |")
+                         f"{_reading_cell(reading, 'index_memory_bytes', 2**20, 1)} | "
+                         f"{_reading_cell(reading, 'index_footprint_bytes', 2**20, 1)} |")
     lines += ["", "## QPS 比值（相對 rust-hnsw；兩者都達到目標才計算）", "", "| n | 目標 | 實作 | 倍數 |", "| --- | --- | --- | --- |"]
     for n, per_target in sorted(report["ratios"].items(), key=lambda item: int(item[0])):
         for target, entry in per_target.items():
@@ -345,15 +354,15 @@ def markdown(report: dict) -> str:
                          f"{q['median']:.0f} | {o['note']} |")
 
     lines += ["", "## scaling（每個 build 計一次；排除被標記的 build；median [min, max]）", "",
-              "| 實作 | n | M | efC | build (s) | peak RSS (MiB) | index memory (MiB) | builds | 被標記的 build |",
-              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+              "| 實作 | n | M | efC | build (s) | peak RSS (MiB) | index memory (MiB) | index footprint (MiB) | builds | 被標記的 build |",
+              "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for s in report["scaling"]:
         def span(summary, scale, digits):
             return "—" if summary is None else (f"{summary['median'] / scale:.{digits}f} "
                                                f"[{summary['min'] / scale:.{digits}f}, {summary['max'] / scale:.{digits}f}]")
         lines.append(f"| {s['implementation']} | {s['n']} | {s['m']} | {s['ef_construction']} | {span(s['build_ns'], 1e9, 3)} | "
                      f"{span(s['peak_rss_bytes'], 2**20, 1)} | {span(s['index_memory_bytes'], 2**20, 1)} | "
-                     f"{s['builds']} | {s['flagged_builds']} |")
+                     f"{span(s['index_footprint_bytes'], 2**20, 1)} | {s['builds']} | {s['flagged_builds']} |")
 
     for title, key in (("結果不足 k 的點", "incomplete_points"), ("被標記的點（不進入主要讀值）", "flagged_points"),
                        ("失敗的子 process", "failed_children")):
