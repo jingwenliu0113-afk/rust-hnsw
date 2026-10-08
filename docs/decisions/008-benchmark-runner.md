@@ -25,10 +25,15 @@ runner 把這些落實成程式，只產生**每個量測點的原始數字**。
   2. **git 乾淨**：`git status --porcelain=v1 --untracked-files=all` 輸出為空（未被 ignore 的 untracked 檔也算 dirty）。
   3. **interpreter**：`sys.prefix` 是 repo 的 `.venv`。
   4. **版本**：hnswlib、faiss-cpu、numpy、maturin 的已安裝版本（`importlib.metadata.version`）與 `requirements-dev.txt` 的 pin 完全相同（007 的語意是在這些版本上實測的）。
-  5. **Rust binding 的編譯資訊**（見 §8）：`opt_level == "3"`、`debug_assertions` 為 false、rustflags 為空。
-  6. **binding 的來源**：`rust_hnsw` 擴充模組檔案的 mtime 晚於 HEAD 的 commit 時間（加上 git 乾淨，代表它是從目前的原始碼編出來的）。
+  5. **Rust binding 的編譯資訊**（見 §10、§11）：`opt_level == "3"`、`debug_assertions` 為 false；
+     rustflags 除了 maturin 為 macOS 擴充模組加上的 `-C link-arg=…` 之外為空；沒有以 `CARGO_PROFILE_RELEASE_*` 環境變數覆寫 profile。
+  6. **binding 的來源**：`rust_hnsw` 擴充模組的 mtime 晚於 HEAD 的 commit 時間，**也晚於每個 tracked 的 Rust / binding 原始碼檔**
+     （`crates/`、`python/`、`Cargo.toml`、`Cargo.lock`）。git 的 checkout、stash、還原都會更新檔案 mtime，
+     所以「改了原始碼、編譯、再還原成乾淨的 HEAD」會被擋下。已知限制：從另一份 checkout 編譯、保留 mtime 複製進同一個 `.venv` 的 binary 偵測不到。
   7. **資料集**：必須是資料集 decision 已登記的真實資料集，檔案 SHA-256 相符。synthetic 資料一律拒絕（SPEC §5）。
-     目前還沒有登記任何資料集，所以 formal 暫時無法執行，這是預期行為。
+  8. **config 已 commit**：config 檔位於 `benchmarks/configs/`，而且內容與 HEAD 中的版本完全相同（repo 外或被 ignore 的路徑都拒絕）。
+     run.json 記錄 config 的 repo 相對路徑與 blob SHA。
+  9. **電源**：使用 AC 電源（本機是筆電；電池供電或低電量模式會改變 CPU 頻率）。
 - **formal 的固定流程**：在乾淨的 HEAD 上先跑 `./scripts/test.sh`（含 `maturin develop --release`）並全部通過，
   等 load 降回門檻以下，再執行：
 
@@ -37,9 +42,10 @@ runner 把這些落實成程式，只產生**每個量測點的原始數字**。
   ```
 
   runner 自己不編譯：編譯會推高 load，與 §2 的門檻衝突。
-- **formal 執行期間的重新確認**：每個子 process 啟動前重讀 owner.txt（內容必須與開始時相同）、確認 HEAD 沒變、工作目錄仍乾淨、
-  `rust_hnsw` 擴充模組的 SHA-256 沒變。任一項不符就停止，run 標記為 `invalid`。
-  （formal run 可能長達數小時，其他 session 依規定可以在不取 lock 的情況下改檔或重新編譯。）
+- **formal 執行期間的重新確認**：每個子 process 啟動前（**在 load 等待通過之後**）與最後一個子 process 結束後，
+  重讀 owner.txt（內容必須與開始時相同）、確認 HEAD 沒變、工作目錄仍乾淨、三個擴充模組（`rust_hnsw`、hnswlib、faiss）的 SHA-256 都沒變。
+  任一項不符（包括讀檔失敗，例如擴充模組重新安裝期間短暫不存在）就停止，run 標記為 `invalid`。
+  （formal run 可能長達數小時，其他 session 依規定可以在不取 lock 的情況下改檔或重新編譯；load 等待期間正是最可能發生的時候。）
 - **smoke**：只用來驗證 runner 本身。不檢查也不需要 lock，前置條件只記錄不強制；輸出標記 `"mode": "smoke"`，不得用於報告。
   smoke 與 formal 走**同一個量測函式、同一組協定常數**，只差在前置檢查與 config。
 
@@ -51,7 +57,7 @@ runner 把這些落實成程式，只產生**每個量測點的原始數字**。
     **第一次 formal run 之前**，必須在沒有 lock holder、沒有其他重工作時量 10 分鐘的閒置 load；
     若「閒置 load 的 P95 + 1.0」> 4.0，先以新的 decision log 修訂門檻，再跑 formal。
 - 每個子 process 啟動前檢查：超過門檻就等待（每 15 秒檢查一次），最多 10 分鐘；仍超過就中止整個 run（`aborted`），不降低門檻繼續。
-- 每個子 process 前後與每個 ef 點前後都記錄 load average；量測中途超過門檻的點標記 `hygiene: load`（見 §9）。
+- 每個子 process 前後、build 前後與每個 ef 點前後都記錄 load average；結束時 1 分鐘 load 超過門檻的點（與 build）標記 `load`（見 §9）。
 - smoke 只記錄，不等待、不中止。
 
 ### 3. config
@@ -112,16 +118,21 @@ shuffles = [101, 102]
 - 每個（build、實作）在**獨立的子 process** 中量測：`subprocess.run([sys.executable, "-m", "benchmarks.run_child", spec])`，cwd 為 repo root。
   - 全新的 interpreter（不用 fork），不繼承父 process 已 import 的 library。
   - 所有子 process 使用同一份環境變數，不額外設定執行緒相關的變數（adapter 本身負責單執行緒，007 §6；強制設定反而會掩蓋 adapter 的失效）。
-    `OMP_*`、`KMP_*`、`RUSTFLAGS`、`CARGO_*`、`PYTHON*`、`VIRTUAL_ENV` 寫入 run.json；不記錄其他變數，避免寫出不相干的機密。
+    實際傳給子 process 的環境中，`OMP_*`、`KMP_*`、`RUSTFLAGS`、`PYTHON*`、`VIRTUAL_ENV`、`DYLD_*`、`Malloc*`、`MALLOC_*`、`VECLIB_*`、`OPENBLAS_*`
+    寫入 run.json（會影響執行緒、allocator 或動態連結）；名稱含 TOKEN、SECRET、PASSW、CREDENTIAL、AUTH、`_KEY` 的不記錄，其他變數也不記錄。
+    不記錄 `CARGO_*`：不影響已編好的子 process，而且可能含有 registry token。
   - 結果不從 stdout 解析：每完成一個 ef 點，子 process 就在父 process 指定的 JSONL 檔 append 一行並 flush，原始陣列另存 `.npz`。
     stdout / stderr 導到該子 process 的 log 檔。
 - **執行順序**：外層迴圈為 build（依 config 展開的順序），內層為實作；第 g 個 build 把實作清單輪換 g mod（實作數）位。
   時間漂移（熱狀態、背景負載）因此不會與「實作」重疊。完整順序寫入 run.json。
 - **失敗**：`subprocess.run(..., timeout=child_timeout_s)`。
-  - 分類：returncode > 0 → `exit_nonzero`；< 0 → `signal`；逾時 → `timeout`（子 process 被 kill）。
-  - crash 前已完成的 ef 點保留，該子 process 標記 `partial`。不自動重跑。
+  - 分類：returncode > 0 → `exit_nonzero`；< 0 → `signal`；逾時 → `timeout`（子 process 被 kill）；
+    returncode 為 0 但沒有 end 紀錄 → `missing_output`；中止時正在執行 → `aborted`。
+  - crash 或中止前已完成的 ef 點保留（id 照常映射），該子 process 標記 `partial`；未映射的原始檔一律刪除。不自動重跑。
   - 任何子 process 失敗時，run 狀態為 `incomplete`，runner 以非零碼結束，但仍寫出完整的 run.json。
-  - 收到 SIGINT / SIGTERM 時 kill 子 process，寫出 `aborted` 狀態。
+  - 收到 SIGINT / SIGTERM / SIGHUP 時 kill 子 process，寫出 `aborted` 狀態。
+  - 收尾（寫出 run.json）期間暫時忽略這三個訊號，寫完才還原；run.json 以暫存檔加 rename 原子寫入；
+    收尾時的紀錄（結束時的 snapshot、檔案 SHA-256）失敗只記錄錯誤，不影響寫出 run.json。
   - `IncompleteResultsError` 是量測結果，不是失敗（§6）。
 
 ### 6. 子 process 內的量測流程
@@ -183,13 +194,17 @@ percentile 一律 `np.percentile(x, q, method="linear")`。所有記憶體欄位
 | `index_memory_bytes` | build 後的 `ps` rss 減 baseline 的 `ps` rss | **SPEC 的 index size**；recall–memory frontier 一律用它 |
 | `serialized_bytes` | 原生格式的檔案大小 | 只作輔助欄位 |
 | `peak_rss_after_search_bytes` | 所有 ef 點結束後的 `ru_maxrss` | 只作參考 |
+| `index_footprint_bytes` | build 後的 phys_footprint 減 baseline（`proc_pid_rusage`） | 輔助欄位，用於 `memory` 標記 |
 
 - recall 一律在父 process、子 process 結束後計算（`tie_aware_recall_at_k` 會把資料轉成 float64，n·d·8 bytes），
   子 process 不載入 ground truth，peak RSS 不會被 harness 主導。
 - **檔案大小不能比較記憶體**：Rust 的格式（005）只存實際的鄰居數；hnswlib 與 FAISS 存固定容量的 slot（未用的格子也寫出，hnswlib 每點另有 8 bytes 的 label）；
   Rust 在記憶體中的 per-node `Vec<Vec<u32>>` 開銷也不在檔案裡。實測 n = 5000、d = 32 時檔案大小 Rust 最小，方向可能與記憶體相反。
-- 已知限制：macOS 的 rss 不含被壓縮或 swap 出去的 page。父 process 在每個子 process 前後記錄 `sysctl vm.swapusage` 與 `vm_stat` 的 compressor 頁數；
-  swap 使用量增加的子 process 標記 `hygiene: swap`。page 大小 16 KiB；allocator 的雜訊由跨 seed 的分布呈現（010）。
+- macOS 的 rss 不含被壓縮或 swap 出去的 page，而記憶體壓力在 macOS 上主要以壓縮呈現：
+  - 子 process 在 baseline 與 after_build 都記錄 phys_footprint（含被壓縮的 page）。footprint 增量比 rss 增量多出 2% + 1 MiB 以上時，
+    代表 build 期間有 page 被壓縮、`index_memory_bytes` 被低估，該 build 標記 `memory`。
+  - 父 process 在每個子 process 前後記錄 `sysctl vm.swapusage` 與 `vm_stat` 的 compressor 頁數；swap 使用量增加的子 process 標記 `swap`。
+  - page 大小 16 KiB；allocator 的雜訊由跨 seed 的分布呈現（010）。
 
 ### 9. hygiene 紀錄與標記
 
@@ -197,10 +212,12 @@ percentile 一律 `np.percentile(x, q, method="linear")`。所有記憶體欄位
   `pmset -g therm`、CPU 使用率最高的 15 個 process、load average、swap。
 - **每個子 process 前後**：時間戳、load average、`pmset -g therm`、swap 與 compressor 頁數。
 - **每個 ef 點前後**：時間戳與 load average（`os.getloadavg()`，不另開 process）。
-- 標記（事先登記；被標記的點照常報告，**不會被悄悄重跑**，處理方式見 010）：
-  - `load`：該點結束時 1 分鐘 load 超過 §2 的門檻。
-  - `thermal`：子 process 前後的 `pmset -g therm` 出現 thermal / performance warning，或 CPU speed / scheduler limit < 100。
-  - `swap`：§8。
+- 標記（事先登記；被標記的點照常報告，**不會被悄悄重跑**，處理方式見 010）。分成子 process、build、點三層，報告時合併到點上：
+  - `load`：該點（或 build）結束時 1 分鐘 load 超過 §2 的門檻。
+  - `thermal`：子 process 前後的 `pmset -g therm` 出現等級不為 0 的 thermal / performance warning（實際格式為 `Thermal Warning Level = N`）、
+    無法解析等級的 warning 訊息，或 CPU speed / scheduler limit < 100。
+  - `swap`、`memory`：§8。
+  - `power`：子 process 前或後不是 AC 電源。
   - `multithread`：§6.7.7。
   - `nondeterministic`：§6.7.4 或 §6.7.5 的不一致數 > 0。
 
@@ -208,7 +225,7 @@ percentile 一律 `np.percentile(x, q, method="linear")`。所有記憶體欄位
 
 - §9 的機器資訊；Python（`sys.version`、`sys.executable`）、numpy、hnswlib、faiss-cpu、maturin 的版本（`importlib.metadata`；`hnswlib.__version__` 不存在）。
 - `faiss.get_compile_options()`（由父 process 取得）。
-- **Rust binding 的編譯資訊**：binding 的 `build.rs` 在編譯時記錄 profile、opt-level、debug、rustflags 與 `rustc -V`，
+- **Rust binding 的編譯資訊**：binding 的 `build.rs` 在編譯時記錄 profile、opt-level、debug、rustflags、`CARGO_PROFILE_*` 環境變數與 `rustc -V`，
   以 `rust_hnsw.BUILD_INFO` 公開（另含 `cfg!(debug_assertions)`）。runtime 讀到的 shell `RUSTFLAGS` 不代表 `.so` 的編譯設定，所以不用它。
 - 三個擴充模組（`rust_hnsw`、hnswlib、faiss 的 `.so`）的路徑與 SHA-256。
   hnswlib 的 `-O3 -march=native` 是依其 `setup.py` 推論（007），不是觀察到的，照實註明；不記錄 runtime 的 `c++ --version`（不一定是當初編譯 hnswlib 的 compiler）。
@@ -219,7 +236,10 @@ percentile 一律 `np.percentile(x, q, method="linear")`。所有記憶體欄位
 
 ### 11. Rust 的編譯設定
 
-- formal 量測使用 `maturin develop --release` 的預設設定（opt-level 3，沒有 `target-cpu=native`，沒有 LTO），由 §1 的檢查強制。
+- formal 量測使用 `maturin develop --release` 的預設設定（opt-level 3，沒有 `target-cpu=native`，沒有 LTO），一律以 `./scripts/test.sh` 編譯。
+- §1 強制 opt-level、debug assertions、rustflags 與 `CARGO_PROFILE_RELEASE_*` 環境變數。LTO 與 codegen-units 另由 tracked 的 `Cargo.toml` 決定
+  （目前沒有 `[profile]` 段落，由 git 乾淨確保）。已知限制：使用者層級的 cargo 設定檔（例如 `~/.cargo/config.toml`）中的 `[profile]` 無法從 binary 得知，
+  formal 前要人工確認沒有這類設定。
 - 這與 004「baseline 刻意不優化」一致。aarch64 上 NEON 本來就是 baseline 指令集，`-march=native` 主要差在較新的擴充。
 - 本專案的距離計算是純量 f32 迴圈（SIMD 屬 Optional），編譯旗標的差異連同 metadata 一起報告。
 
@@ -227,7 +247,8 @@ percentile 一律 `np.percentile(x, q, method="linear")`。所有記憶體欄位
 
 `results/runs/<UTC 時間>-<mode>/`（與 009 的 `results/profiles/` 分開；`results/` 不進版控）：
 
-- `run.json`：status（`complete` / `incomplete` / `aborted` / `invalid`）與原因、protocol、config、metadata、子集資訊、執行順序、
+- `run.json`：status（`complete` / `incomplete` / `aborted` / `invalid`，以及 runner 本身發生非預期例外時的 `error`：仍寫出 run.json 並附 traceback，
+  例外重新拋出）與原因、protocol、config、metadata、子集資訊、執行順序、
   每個子 process 的狀態與 hygiene 紀錄、每個量測點的摘要，以及所有附檔的相對路徑與 SHA-256。
 - `points/<point_id>.npz`：`ids_k10`（int64 [nq, 10]，已映射回子集列號）、`ids_k1`、`qps_ns`（[5]）、`latency_ns`（[3, nq]）。
 - `children/<child_id>/`：spec、JSONL、log，以及空呼叫與 Python 迴圈的原始樣本。
@@ -288,3 +309,27 @@ percentile 一律 `np.percentile(x, q, method="linear")`。所有記憶體欄位
 - 「FAISS 的插入順序差異沒有記錄」：007 已記錄並有測試。
 - 「比對 warm-up 與重跑結果以偵測 OpenMP 設定錯誤」：FAISS 每個 query 獨立計算，執行緒數改變不影響結果，抓不到；
   決定性的比對仍保留，但理由是偵測非決定性的 bug（§6.7.4）。
+
+## 實作後的審查（2026-10-08，在任何正式結果之前）
+
+runner 實作完成後，以三個角度審查（是否忠實落實 008 / 010、mutation testing 檢查測試鑑別力、強健性與 formal 的可行性），
+每個 finding 都有一位驗證者重現或反駁，共 56 個 findings：20 個照原建議、23 個修改後採用、13 個駁回。依此修訂本文件（上面各節已更新）：
+
+- **前置檢查的漏洞**：
+  - 「`.so` 晚於 HEAD 且 git 乾淨」推不出「`.so` 由 HEAD 編出」（改原始碼、編譯、再還原就能通過）→ 改為也要晚於每個 tracked 原始碼檔（§1.6）。
+  - formal config 可以放在 repo 外或被 ignore 的路徑 → 新增 §1.8。
+  - 重新確認排在 load 等待之前、最後一個子 process 之後沒有確認、只比對 rust_hnsw → 都已修正。
+  - `CARGO_PROFILE_RELEASE_*` 覆寫看不到 → build.rs 記錄並拒絕（§11）。
+- **thermal 標記在本機永遠不會觸發**：pmset 的實際格式是 `Thermal Warning Level = N`（大寫），原本的比對區分大小寫；等級 0 代表正常（§9）。
+- **記憶體壓力**：macOS 主要以壓縮而不是 swap 呈現 → 新增 phys_footprint 與 `memory` 標記（§8）。新增 `power` 標記與 AC 電源的前置檢查。
+- **中止與收尾**：中止時進行中的子 process 不會出現在 run.json、SIGHUP 沒有處理、收尾的任何失敗都會讓 run.json 寫不出來 → 都已修正（§5、§12）。
+- **機密**：`CARGO_*` 前綴可能寫出 registry token → 改為不記錄，並以名稱過濾機密（§5）。
+- **測試鑑別力**：mutation 發現 hygiene 標記、formal 檢查的接線、008 §6 的呼叫順序與次數、記憶體的量測時點、計時區間的邊界都沒有測試保護。
+  已補上：以追蹤用的 stub 斷言完整的呼叫序列（包括 gc 狀態），以假時鐘斷言計時區間只包住 `adapter.search`，
+  以配置記憶體的 stub 斷言 baseline 與 peak RSS 的時點，以注入的 snapshot 與 stub 正向測試每一種標記。
+- **父 process 的記憶體**：tie-aware recall 不再把整份 data 轉成 f64，原始陣列在 prepare 之後即釋放。
+
+**駁回的主要項目**：要求 runner 對單一 config 強制 010 的最低 variance 次數（會擋下合理的分批 run）、
+比對 lock owner 的 process 名稱或啟動時間（綁死 with-mac-lock 的格式，且情境需要 stale lock 加上 pid 重用）、
+每個子 process 結束就寫一次 run.json（收尾已改為不會失敗，SIGKILL / 斷電屬極端情況）、
+以及 ground truth 計算期間無法立即中止（此時還沒有任何量測，不會遺失資料）。

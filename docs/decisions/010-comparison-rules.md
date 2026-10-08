@@ -24,6 +24,8 @@ EXPERIMENT_RULES 要求 same recall region、多次重跑、報告 variance。
 
 - 對每個（資料集、n、實作），以所有量測的 (M, efC, ef) 點組成 frontier。
   - 每個點的數值取**跨 seed 的 median**（只用原始插入順序的 build；見第 4 點）。
+  - 參與 median 的是該點 k = 10 status 為 ok 的 build；主要讀值另排除有 hygiene 標記的 build，用剩下的 build 計算 median。
+    每個讀值附上參與的 build 數。（2026-10-08 補記，在任何正式結果之前：原文沒有規定部分 seed 被標記或失敗時怎麼算。）
   - 不比較「同一組 (M, efC, ef)」：三者建出的 graph 不等價（007 §4）。同 (M, efC) 的 recall-vs-ef 曲線只作輔助，不用於效能結論。
 - 對每個目標水準，在「median Recall@10 ≥ 目標」的點中，分別取：
   - QPS 最高（recall–throughput）；
@@ -39,9 +41,9 @@ EXPERIMENT_RULES 要求 same recall region、多次重跑、報告 variance。
 - Rust 與 FAISS 補 `-1` 的點（`incomplete_queries > 0`）**納入** frontier，並加上標記：`-1` 依 003 已算成未命中，recall 如實反映缺少的結果。
 - hnswlib 整批失敗的點沒有 QPS / latency / Recall@10，不存在於 frontier（007 §3）。
 - 所有結果不足 k 的點另外列表呈現，並列出三者在同一組參數上的狀態（007 第 3 點的不對稱）。
-- 有 hygiene 標記（008 §9：`load`、`thermal`、`swap`、`multithread`、`nondeterministic`）的點**不進入**主要比較，另外列表呈現；
-  若排除它們會改變某個目標的讀值，同時報告排除前後的讀值。
-- 失敗或被中止的子 process（008 §5）照實列出；不得以重跑取代已完成的 formal run，除非該 run 為 `invalid` 或 `aborted`，且要記錄原因。
+- 有 hygiene 標記（008 §9：`load`、`thermal`、`swap`、`memory`、`power`、`multithread`、`nondeterministic`；子 process、build、點三層的標記都算）的點
+  **不進入**主要比較，另外列表呈現；若排除它們會改變某個目標的讀值，同時報告排除前後的讀值。scaling 的 build 指標同樣處理。
+- 失敗或被中止的子 process（008 §5）照實列出；不得以重跑取代已完成的 formal run，除非該 run 為 `invalid`、`aborted` 或 `error`，且要記錄原因。
 
 ### 4. seed 與 insertion order variance
 

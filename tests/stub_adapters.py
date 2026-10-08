@@ -4,7 +4,10 @@
 結果不足 k、crash 的處理）可以被精確斷言。
 """
 
+import gc
 import os
+import threading
+import time
 
 import numpy as np
 
@@ -94,4 +97,122 @@ class CrashStub(ExactStub):
     def set_ef_search(self, ef: int) -> None:
         if ef >= 20:
             os.abort()
+        super().set_ef_search(ef)
+
+
+def _log(event: str) -> None:
+    path = os.environ.get("STUB_CALL_LOG")
+    if path:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(event + "\n")
+
+
+class TracingStub(ExactStub):
+    """記錄每次 build / set_ef_search / search / save_native，用來釘住 008 §6 的呼叫順序與次數。"""
+
+    name = "tracing-stub"
+
+    def build(self, data):
+        _log(f"build:{data.shape[0]}")
+        super().build(data)
+
+    def set_ef_search(self, ef):
+        _log(f"ef:{ef}")
+        super().set_ef_search(ef)
+
+    def search(self, queries, k):
+        _log(f"search:{k},{queries.shape[0]},{self._ef},{int(gc.isenabled())}")
+        return self._exact(queries, k)
+
+    def save_native(self, path):
+        _log("save")
+        super().save_native(path)
+
+
+class MemoryStub(ExactStub):
+    """第一次 build（library warm-up）時配置 64 MiB 並一直保留；第一次 k = 10 search 時再配置 128 MiB。
+
+    baseline 與 peak RSS 的時點正確時：index 記憶體與 build 期間的高水位增量都很小，搜尋後的高水位多出 128 MiB。
+    """
+
+    name = "memory-stub"
+    _kept = []
+
+    def build(self, data):
+        if not MemoryStub._kept:
+            MemoryStub._kept.append(np.random.default_rng(0).random(64 * 2**20 // 8))
+        super().build(data)
+
+    def search(self, queries, k):
+        if k > 1 and not hasattr(self, "_buffer"):
+            self._buffer = np.random.default_rng(1).random(128 * 2**20 // 8)
+        return self._exact(queries, k)
+
+
+class NondeterministicStub(ExactStub):
+    """每個 ef 的第一次整批 k = 10 search 與所有單筆 k = 10 search，把最後一欄換成 -1 / +inf。"""
+
+    name = "nondeterministic-stub"
+
+    def set_ef_search(self, ef):
+        self._batch_calls = 0
+        super().set_ef_search(ef)
+
+    def search(self, queries, k):
+        ids, distances = self._exact(queries, k)
+        if k > 1:
+            batch = queries.shape[0] > 1
+            if batch:
+                self._batch_calls += 1
+            if not batch or self._batch_calls == 1:
+                ids[:, -1] = -1
+                distances[:, -1] = np.inf
+        return ids, distances
+
+
+def _spin_in_another_thread(seconds: float) -> None:
+    def spin():
+        end = time.thread_time() + seconds
+        while time.thread_time() < end:
+            pass
+
+    worker = threading.Thread(target=spin)
+    worker.start()
+    worker.join()
+
+
+class MultithreadStub(ExactStub):
+    """build 與整批 k = 10 search 時，另一個 thread 消耗 CPU：模擬單執行緒設定失效。"""
+
+    name = "multithread-stub"
+
+    def build(self, data):
+        _spin_in_another_thread(0.05)
+        super().build(data)
+
+    def search(self, queries, k):
+        if k > 1 and queries.shape[0] > 1:
+            _spin_in_another_thread(0.02)
+        return self._exact(queries, k)
+
+
+class SlowStub(ExactStub):
+    """ef ≥ 20 時卡住 60 秒，讓測試在子 process 執行中送出中止訊號。"""
+
+    name = "slow-stub"
+
+    def set_ef_search(self, ef):
+        if ef >= 20:
+            time.sleep(60)
+        super().set_ef_search(ef)
+
+
+class ExitStub(ExactStub):
+    """ef ≥ 20 時以非零碼直接結束（不是 signal）。"""
+
+    name = "exit-stub"
+
+    def set_ef_search(self, ef):
+        if ef >= 20:
+            os._exit(3)
         super().set_ef_search(ef)

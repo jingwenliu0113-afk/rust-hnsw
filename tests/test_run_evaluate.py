@@ -29,6 +29,7 @@ def test_protocol_constants_match_decision_008():
         "load_wait_s": 600,
         "load_poll_s": 15,
         "single_thread_tolerance": {"relative": 0.02, "absolute_s": 0.001},
+        "memory_tolerance": {"relative": 0.02, "absolute_bytes": 1 << 20},
         "tie_eps": TIE_EPS,
     }
 

@@ -3,7 +3,8 @@
 import numpy as np
 import pytest
 
-from benchmarks.metrics import recall_at_k, tie_aware_recall_at_k
+from benchmarks.interface import prepare_vectors
+from benchmarks.metrics import TIE_EPS, recall_at_k, tie_aware_recall_at_k
 
 
 def ids(rows):
@@ -117,3 +118,27 @@ def test_tie_aware_rejects_mismatched_queries():
     data = circle([0, 10])
     with pytest.raises(ValueError, match="queries"):
         tie_aware_recall_at_k(ids([[0], [1]]), ids([[0], [1]]), data, circle([0]), 1)
+
+
+def test_tie_aware_recall_converts_only_the_needed_rows_without_changing_results():
+    """008 §8：不再把整份 data 轉成 f64；結果必須與舊的整份轉換完全相同。"""
+    from benchmarks import datasets
+    from benchmarks.evaluate import rank1_tie_queries
+
+    loaded = datasets.load(datasets.REGISTRY["smoke-duplicates"])
+    data, queries = prepare_vectors(loaded.train), prepare_vectors(loaded.queries)
+    data64, queries64 = data.astype(np.float64), queries.astype(np.float64)
+    order = np.argsort(1.0 - queries64 @ data64.T, axis=1, kind="stable")
+    true = order[:, :10]
+    found = np.roll(order[:, :10], 1, axis=1)
+
+    def old_formula(k):
+        threshold = 1.0 - np.einsum("ij,ij->i", data64[true[:, k - 1]], queries64) + TIE_EPS
+        hits = sum(int((1.0 - np.einsum("ij,ij->i", data64[found[:, j]], queries64) <= threshold).sum()) for j in range(k))
+        return hits / (found.shape[0] * k)
+
+    for k in (1, 10):
+        assert tie_aware_recall_at_k(found, true, data, queries, k) == old_formula(k)
+    first = 1.0 - np.einsum("ij,ij->i", data64[true[:, 0]], queries64)
+    second = 1.0 - np.einsum("ij,ij->i", data64[true[:, 1]], queries64)
+    assert rank1_tie_queries(data, queries, true) == int((second - first <= TIE_EPS).sum())

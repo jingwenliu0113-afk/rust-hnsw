@@ -53,7 +53,7 @@ def test_frontier_reads_the_best_point_at_or_above_each_target_without_interpola
     report = build_report([make_record([curve("rust-hnsw", RUST_CURVE)])])
     frontier = report["frontier"]["rust-hnsw"]["1000"]
     assert frontier["0.90"]["main"]["qps"] == {"value": 800.0, "m": 16, "ef_construction": 100, "ef_search": 20,
-                                                "incomplete": False}
+                                                "incomplete": False, "builds": 1}
     assert frontier["0.95"]["main"]["qps"]["value"] == 500.0
     # 0.985 < 0.99：沒有任何點達到，不得以最接近的點代替。
     assert frontier["0.99"]["main"] == {"reached": False}
@@ -64,7 +64,8 @@ def test_frontier_spans_all_m_and_ef_construction():
     other = curve("rust-hnsw", [(10, 0.90, 400.0), (40, 0.951, 600.0)], m=8)
     report = build_report([make_record([curve("rust-hnsw", RUST_CURVE), other])])
     reading = report["frontier"]["rust-hnsw"]["1000"]["0.95"]["main"]
-    assert reading["qps"] == {"value": 600.0, "m": 8, "ef_construction": 100, "ef_search": 40, "incomplete": False}
+    assert reading["qps"] == {"value": 600.0, "m": 8, "ef_construction": 100, "ef_search": 40, "incomplete": False,
+                              "builds": 1}
 
 
 def test_latency_and_memory_readings_take_the_minimum():
@@ -111,6 +112,36 @@ def test_flagged_points_leave_the_main_reading_and_both_readings_are_kept_when_t
     assert entry["all_points"]["qps"]["value"] == 5000.0
     assert entry["differs"] is True
     assert [p["ef_search"] for p in report["flagged_points"]] == [10]
+
+
+def test_main_reading_reports_how_many_builds_remain_after_excluding_flagged_ones():
+    """010 §2 補記：排除被標記的 build 之後，用剩下的 seed 計算 median，並附上參與的 build 數。"""
+    children = [
+        make_child("rust-hnsw", [make_point(10, 0.95, q, flags=f)], seed=s)
+        for s, q, f in [(1, 100.0, ()), (2, 200.0, ("load",)), (3, 300.0, ())]
+    ]
+    entry = build_report([make_record(children)])["frontier"]["rust-hnsw"]["1000"]["0.90"]
+    assert (entry["main"]["qps"]["value"], entry["main"]["qps"]["builds"]) == (200.0, 2)
+    assert (entry["all_points"]["qps"]["value"], entry["all_points"]["qps"]["builds"]) == (200.0, 3)
+    assert entry["differs"] is True
+
+
+@pytest.mark.parametrize("flag", ["power", "memory"])
+def test_power_and_memory_flags_are_hygiene_flags(flag):
+    child = curve("rust-hnsw", [(10, 0.93, 500.0)], flags=[flag])
+    report = build_report([make_record([child])])
+    assert report["frontier"]["rust-hnsw"]["1000"]["0.90"]["main"] == {"reached": False}
+
+
+def test_build_level_flags_exclude_the_build_from_the_main_readings():
+    child = curve("rust-hnsw", [(10, 0.93, 500.0)])
+    child["build"]["flags"] = ["load"]
+    report = build_report([make_record([child])])
+    assert report["frontier"]["rust-hnsw"]["1000"]["0.90"]["main"] == {"reached": False}
+    (row,) = report["scaling"]
+    assert row["builds"] == 0 and row["build_ns"] is None
+    assert row["all_builds"]["build_ns"]["values"] == [1e9]
+    assert row["differs"] is True
 
 
 def test_child_level_hygiene_flags_apply_to_every_point_of_the_build():
@@ -172,6 +203,7 @@ def test_scaling_reports_build_metrics_per_n_at_fixed_parameters():
     report = build_report([make_record(children)])
     rows = {(r["n"], r["implementation"]): r for r in report["scaling"]}
     assert rows[(1000, "rust-hnsw")]["build_ns"]["median"] == 2e9
+    assert rows[(1000, "rust-hnsw")]["builds"] == 2 and rows[(1000, "rust-hnsw")]["differs"] is False
     assert rows[(2000, "rust-hnsw")]["build_ns"]["values"] == [5e9]
     assert set(report["frontier"]["rust-hnsw"]) == {"1000", "2000"}
 

@@ -3,17 +3,20 @@
 smoke 只驗證 runner 本身，數字不作任何結論。子 process 都是真的 subprocess。
 """
 
+import hashlib
 import json
 import os
 import signal
 import sys
+import threading
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from benchmarks import datasets, environment, evaluate, protocol
-from benchmarks.config import IMPLEMENTATIONS
+from benchmarks import run as run_module
+from benchmarks.config import IMPLEMENTATIONS, ConfigError
 from benchmarks.environment import PreflightError
 from benchmarks.interface import prepare_vectors
 from benchmarks.metrics import recall_at_k, tie_aware_recall_at_k
@@ -30,6 +33,12 @@ STUBS = {
     "incomplete-stub": ("tests.stub_adapters:IncompleteStub", "numpy"),
     "padding-stub": ("tests.stub_adapters:PaddingStub", "numpy"),
     "crash-stub": ("tests.stub_adapters:CrashStub", "numpy"),
+    "exit-stub": ("tests.stub_adapters:ExitStub", "numpy"),
+    "slow-stub": ("tests.stub_adapters:SlowStub", "numpy"),
+    "tracing-stub": ("tests.stub_adapters:TracingStub", "numpy"),
+    "memory-stub": ("tests.stub_adapters:MemoryStub", "numpy"),
+    "nondeterministic-stub": ("tests.stub_adapters:NondeterministicStub", "numpy"),
+    "multithread-stub": ("tests.stub_adapters:MultithreadStub", "numpy"),
 }
 
 
@@ -128,6 +137,9 @@ def test_memory_fields_are_bytes(smoke):
         assert build["peak_rss_bytes"] >= build["baseline"]["ru_maxrss_bytes"] > 10 * 1024 * 1024
         assert build["peak_rss_minus_baseline_bytes"] == build["peak_rss_bytes"] - build["baseline"]["ru_maxrss_bytes"]
         assert build["index_memory_bytes"] == build["after_build"]["rss_bytes"] - build["baseline"]["rss_bytes"]
+        assert build["index_footprint_bytes"] == (
+            build["after_build"]["phys_footprint_bytes"] - build["baseline"]["phys_footprint_bytes"]
+        )
         assert build["peak_rss_after_search_bytes"] >= build["peak_rss_bytes"]
         assert build["serialized_bytes"] > 0
 
@@ -138,7 +150,12 @@ def test_null_call_and_python_loop_are_recorded(smoke):
         assert (null_call["n"], null_call["k"], null_call["ef"]) == (1, 1, 1)
         assert null_call["samples"] == 1000
         assert 0 < null_call["p50_ns"] <= null_call["p95_ns"]
-        assert child["python_loop"]["mean_ns"] > 0
+        loop = child["python_loop"]
+        assert loop["mean_ns"] > 1.0
+        assert 0 < loop["p50_ns"] <= loop["p95_ns"]
+        samples = np.load(smoke.run_dir / child["samples_file"])
+        assert samples["python_loop_ns"].shape == (1000,)
+        assert samples["null_call_ns"].shape == (1000,)
 
 
 def test_subset_checks_are_recorded(smoke):
@@ -162,8 +179,9 @@ def test_metadata_is_recorded(smoke):
     assert "faiss_compile_options" in meta
     assert meta["machine"]["performance_cores"] >= 1
     assert meta["start"]["loadavg"] and meta["end"]["loadavg"]
+    assert meta["end"]["pmset"] and meta["end"]["pmset_batt"] and meta["end"]["power_source"]
     for key in meta["child_env"]:
-        assert key.startswith(("OMP_", "KMP_", "RUSTFLAGS", "CARGO_", "PYTHON", "VIRTUAL_ENV"))
+        assert key.startswith(run_module.CHILD_ENV_PREFIXES)
 
 
 def test_metrics_can_be_recomputed_from_the_files(smoke):
@@ -172,6 +190,10 @@ def test_metrics_can_be_recomputed_from_the_files(smoke):
     loaded = datasets.load(datasets.REGISTRY[record["dataset"]["name"]])
     queries = prepare_vectors(loaded.queries)
     train = prepare_vectors(loaded.train)
+    assert set(record["files"]) == {
+        str(p.relative_to(run_dir)) for p in run_dir.rglob("*") if p.is_file() and p.name != "run.json"
+    }
+    assert not any("/raw/" in path for path in record["files"])
     for path, digest in record["files"].items():
         assert environment.sha256_file(run_dir / path) == digest
     for child in record["children"]:
@@ -231,7 +253,10 @@ def test_shuffled_builds_are_mapped_back_to_subset_rows(tmp_path):
     for point in all_points(result.record):
         assert point["k10"]["recall"] == 1.0
         assert point["k1"]["recall"] == 1.0
-    assert result.record["children"][2]["build"]["permutation_sha256"]
+    expected = hashlib.sha256(np.random.default_rng(7).permutation(300).astype("<i8").tobytes()).hexdigest()
+    assert result.record["children"][2]["build"]["permutation_sha256"] == expected
+    # exact-stub 沒有 tie：k = 1 的答案與第一欄在同一個 id 空間中完全相同。
+    assert all(p["k1_differs_from_k10_first_column"] == 0 for p in all_points(result.record))
 
 
 def test_padding_survives_the_mapping(tmp_path):
@@ -274,7 +299,8 @@ def test_incomplete_results_mark_the_point_without_retrying(tmp_path, monkeypatc
 
 
 def test_crash_keeps_completed_points(tmp_path):
-    result = run(stub_config(["crash-stub", "exact-stub"], ef_search=(10, 20)), "smoke", tmp_path, implementations=STUBS)
+    result = run(stub_config(["crash-stub", "exit-stub", "exact-stub"], ef_search=(10, 20)), "smoke", tmp_path,
+                 implementations=STUBS)
     assert result.exit_code != 0
     assert result.record["status"] == "incomplete"
     crash = by_implementation(result.record, "crash-stub")[0]
@@ -283,7 +309,13 @@ def test_crash_keeps_completed_points(tmp_path):
     assert crash["partial"] is True
     assert [point["ef_search"] for point in crash["points"]] == [10]
     assert by_implementation(result.record, "exact-stub")[0]["status"] == "ok"
+    exited = by_implementation(result.record, "exit-stub")[0]
+    assert (exited["status"], exited["returncode"], exited["partial"]) == ("exit_nonzero", 3, True)
+    assert [point["ef_search"] for point in exited["points"]] == [10]
     assert json.loads((result.run_dir / "run.json").read_text(encoding="utf-8"))["status"] == "incomplete"
+    spec = json.loads((result.run_dir / "children" / crash["child_id"] / "spec.json").read_text(encoding="utf-8"))
+    assert not Path(spec["scratch_dir"]).exists()
+    assert not any("/raw/" in path for path in result.record["files"])
 
 
 def test_nonzero_exit_and_timeout_are_classified(tmp_path):
@@ -385,3 +417,404 @@ def test_smoke_records_but_does_not_wait_for_load(tmp_path):
     result = run(stub_config(["exact-stub"]), "smoke", tmp_path, implementations=STUBS, hooks=hooks)
     assert result.record["status"] == "complete"
     assert result.record["children"][0]["load_gate"]["samples"][0][1] == 9.0
+
+
+# ---- 008 §6 的呼叫順序、計時邊界與記憶體時點（實作審查補上） ----
+
+
+def test_child_call_sequence_matches_008(tmp_path, monkeypatch):
+    log = tmp_path / "calls.log"
+    monkeypatch.setenv("STUB_CALL_LOG", str(log))
+    result = run(stub_config(["tracing-stub"], ef_search=(10, 20)), "smoke", tmp_path / "out", implementations=STUBS)
+    assert result.record["status"] == "complete"
+    expected = ["build:16", "ef:1", "search:1,1,1,1", "build:1", "ef:1"] + ["search:1,1,1,1"] * 1100 + ["build:300"]
+    for ef in (10, 20):
+        expected += [f"ef:{ef}", f"search:10,100,{ef},1"] + [f"search:10,100,{ef},0"] * 5
+        expected += [f"search:10,1,{ef},0"] * 400 + [f"search:1,100,{ef},1"]
+    expected.append("save")
+    assert log.read_text(encoding="utf-8").split() == expected
+    for point in all_points(result.record):
+        assert np.load(result.run_dir / point["file"])["qps_ns"].shape == (5,)
+        assert len(point["k10"]["qps"]["qps"]) == 5
+
+
+class TickingArray(np.ndarray):
+    """每次被切片就讓假時鐘前進：計時區間若包含切片，latency 就會大於 search 本身的時間。"""
+
+    clock = None
+
+    def __getitem__(self, item):
+        TickingArray.clock["t"] += 1
+        return super().__getitem__(item)
+
+
+class FixedCostAdapter:
+    def __init__(self, clock):
+        self._clock = clock
+
+    def search(self, queries, k):
+        self._clock["t"] += 1000
+        nq = queries.shape[0]
+        ids = np.tile(np.arange(k, dtype=np.int64), (nq, 1))
+        distances = np.tile(np.linspace(0.0, 1.0, k, dtype=np.float32), (nq, 1))
+        return ids, distances
+
+
+def test_timed_regions_contain_only_the_search_call(monkeypatch):
+    from benchmarks import run_child
+
+    clock = {"t": 0}
+    monkeypatch.setattr(run_child, "perf_counter_ns", lambda: clock["t"])
+    TickingArray.clock = clock
+    queries = np.zeros((120, 4), dtype=np.float32).view(TickingArray)
+    views = [np.asarray(queries[i : i + 1]) for i in range(120)]
+    summary, arrays = run_child.measure_point(FixedCostAdapter(clock), queries, views)
+    assert summary["status"] == "ok"
+    assert (arrays["qps_ns"] == 1000).all()
+    assert (arrays["latency_ns"] == 1000).all()
+
+
+def test_memory_is_sampled_at_the_right_moments(tmp_path):
+    result = run(stub_config(["memory-stub"]), "smoke", tmp_path, implementations=STUBS)
+    build = result.record["children"][0]["build"]
+    # library warm-up 的 64 MiB 在 baseline 之前；第一次 k = 10 search 的 128 MiB 在 peak RSS 之後。
+    assert build["index_memory_bytes"] < 32 * 2**20
+    assert build["peak_rss_minus_baseline_bytes"] < 32 * 2**20
+    assert build["peak_rss_after_search_bytes"] - build["peak_rss_bytes"] > 96 * 2**20
+
+
+def test_run_checks_that_the_dataset_is_large_enough(tmp_path):
+    with pytest.raises(ConfigError, match="n = 1000"):
+        run(stub_config(["exact-stub"], n=(1000,)), "smoke", tmp_path, implementations=STUBS)
+    assert not any(tmp_path.iterdir())
+
+
+# ---- hygiene 標記（008 §9） ----
+
+
+def fake_snapshot(swap=0, warnings=(), power="AC Power"):
+    return {"time": 0.0, "loadavg": [1.0, 1.0, 1.0], "therm": "", "therm_warnings": list(warnings),
+            "swap_used_bytes": swap, "compressor_pages": 0, "power_source": power}
+
+
+def test_child_flags_come_from_the_snapshots_around_it(tmp_path):
+    base = fake_snapshot()
+    pairs = [
+        (fake_snapshot(swap=0), fake_snapshot(swap=1 << 20)),
+        (fake_snapshot(swap=1 << 20), fake_snapshot(swap=0)),
+        (fake_snapshot(), fake_snapshot(warnings=["Thermal Warning Level = 5"])),
+        (fake_snapshot(warnings=["Thermal Warning Level = 5"]), fake_snapshot()),
+        (fake_snapshot(), fake_snapshot(power="Battery Power")),
+    ]
+    snaps = iter([base, *[snap for pair in pairs for snap in pair], base])
+    hooks = Hooks(snapshot=lambda: next(snaps))
+    result = run(stub_config(["exact-stub"], seeds=(1, 2, 3, 4, 5)), "smoke", tmp_path, implementations=STUBS, hooks=hooks)
+    flags = [set(c["flags"]) & {"swap", "thermal", "power"} for c in result.record["children"]]
+    assert flags == [{"swap"}, set(), {"thermal"}, {"thermal"}, {"power"}]
+
+
+def test_nondeterministic_results_are_counted_and_flagged(tmp_path):
+    result = run(stub_config(["nondeterministic-stub"]), "smoke", tmp_path, implementations=STUBS)
+    point = all_points(result.record)[0]
+    assert point["k10"]["repeat_mismatch_queries"] == 100
+    assert point["k10"]["batch_vs_single_mismatch_queries"] == 100
+    assert "nondeterministic" in point["flags"]
+
+
+def test_work_on_other_threads_is_flagged(tmp_path):
+    result = run(stub_config(["multithread-stub"]), "smoke", tmp_path, implementations=STUBS)
+    child = result.record["children"][0]
+    assert "multithread" in child["flags"]
+    assert all("multithread" in point["flags"] for point in child["points"])
+
+
+@pytest.mark.parametrize(("other", "process", "flagged"), [(0.0205, 1.0, False), (0.0215, 1.0, True),
+                                                           (0.0009, 0.0, False), (0.0011, 0.0, True)])
+def test_single_thread_tolerance_boundaries(other, process, flagged):
+    assert protocol.exceeds_single_thread_tolerance(other, process) is flagged
+
+
+@pytest.mark.parametrize(("footprint", "rss", "flagged"), [(100 << 20, 100 << 20, False), (100 << 20, 97 << 20, False),
+                                                           (100 << 20, 50 << 20, True), (0, -(2 << 20), True)])
+def test_memory_tolerance_boundaries(footprint, rss, flagged):
+    assert protocol.exceeds_memory_tolerance(footprint, rss) is flagged
+
+
+def evaluate_with_load(tmp_path, load_end):
+    raw = tmp_path / f"raw-{load_end}.npz"
+    ids = np.tile(np.arange(10, dtype=np.int64), (100, 1))
+    np.savez(raw, ids_k10=ids, qps_ns=np.full(5, 1000), latency_ns=np.full((3, 100), 1000), ids_k1=ids[:, :1])
+    (tmp_path / "points").mkdir(exist_ok=True)
+    line = {"ef_search": 10, "raw_file": str(raw), "start_time": 0.0, "end_time": 1.0, "loadavg_start": [9.0, 0, 0],
+            "loadavg_end": [load_end, 0, 0], "k1": {"status": "ok"},
+            "k10": {"status": "ok", "repeat_mismatch_queries": 0, "batch_vs_single_mismatch_queries": 0,
+                    "other_thread_cpu": {"qps_other_s": 0.0, "qps_process_s": 1.0, "latency_other_s": 0.0,
+                                         "latency_process_s": 1.0}}}
+    data = prepare_vectors(np.random.default_rng(0).standard_normal((20, 4)))
+    queries = prepare_vectors(np.random.default_rng(1).standard_normal((100, 4)))
+    gt = np.tile(np.arange(10), (100, 1))
+    return run_module._evaluate_point(line, f"c{load_end}", None, gt, data, queries, tmp_path)
+
+
+def test_point_load_flag_uses_the_load_at_the_end_of_the_point(tmp_path):
+    assert "load" not in evaluate_with_load(tmp_path, protocol.MAX_LOAD_1MIN)["flags"]
+    assert "load" in evaluate_with_load(tmp_path, protocol.MAX_LOAD_1MIN + 0.01)["flags"]
+
+
+def child_lines(load_end, footprint_delta, rss_delta):
+    baseline = {"rss_bytes": 100 << 20, "ru_maxrss_bytes": 100 << 20, "phys_footprint_bytes": 100 << 20}
+    after = {"rss_bytes": baseline["rss_bytes"] + rss_delta, "ru_maxrss_bytes": 200 << 20,
+             "phys_footprint_bytes": baseline["phys_footprint_bytes"] + footprint_delta}
+    return [{"type": "prelude", "baseline": baseline},
+            {"type": "build", "build_ns": 1, "other_thread_cpu": {"other_s": 0.0, "process_s": 1.0},
+             "peak_rss_bytes": 200 << 20, "after_build": after, "loadavg_start": [1.0, 0, 0],
+             "loadavg_end": [load_end, 0, 0]}]
+
+
+def test_build_level_flags_for_load_and_compressed_memory():
+    build, _ = run_module._child_record(child_lines(9.0, 50 << 20, 50 << 20), {})
+    assert build["flags"] == ["load"]
+    build, _ = run_module._child_record(child_lines(1.0, 50 << 20, 20 << 20), {})
+    assert build["flags"] == ["memory"]
+    assert build["index_footprint_bytes"] == 50 << 20
+    build, _ = run_module._child_record(child_lines(1.0, 50 << 20, 50 << 20), {})
+    assert build["flags"] == []
+
+
+# ---- 子 process 的環境（008 §5） ----
+
+
+def test_children_receive_the_parent_environment_unchanged(tmp_path):
+    dump = tmp_path / "env.json"
+    script = "import json, os, sys; json.dump(dict(os.environ), open(sys.argv[1], 'w'))"
+    hooks = Hooks(child_command=lambda spec: [sys.executable, "-c", script, str(dump)])
+    result = run(stub_config(["exact-stub"]), "smoke", tmp_path / "out", implementations=STUBS, hooks=hooks)
+    child_env = json.loads(dump.read_text(encoding="utf-8"))
+    keys = {k for k in {*child_env, *os.environ} if k.startswith(run_module.CHILD_ENV_PREFIXES)}
+    assert all(child_env.get(k) == os.environ.get(k) for k in keys)
+    assert result.record["children"][0]["status"] == "missing_output"
+
+
+def test_secret_looking_variables_are_not_recorded(tmp_path, monkeypatch):
+    monkeypatch.setenv("CARGO_REGISTRY_TOKEN", "cio_secret_value")
+    monkeypatch.setenv("PYTHON_TEST_TOKEN", "py_secret_value")
+    monkeypatch.setenv("OMP_NUM_THREADS_TEST", "3")
+    result = run(stub_config(["exact-stub"]), "smoke", tmp_path, implementations=STUBS)
+    recorded = result.record["metadata"]["child_env"]
+    assert "CARGO_REGISTRY_TOKEN" not in recorded and "PYTHON_TEST_TOKEN" not in recorded
+    assert recorded["OMP_NUM_THREADS_TEST"] == "3"
+    text = (result.run_dir / "run.json").read_text(encoding="utf-8")
+    assert "cio_secret_value" not in text and "py_secret_value" not in text
+
+
+# ---- 失敗、中止與收尾（008 §5、§12） ----
+
+
+def test_missing_output_is_a_failure(tmp_path):
+    hooks = Hooks(child_command=lambda spec: [sys.executable, "-c", "pass"])
+    result = run(stub_config(["exact-stub"]), "smoke", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["children"][0]["status"] == "missing_output"
+    assert result.record["status"] == "incomplete"
+    assert result.exit_code != 0
+
+
+def test_truncated_jsonl_line_is_ignored(tmp_path):
+    script = (
+        "import json, os, sys; spec = json.load(open(sys.argv[1])); f = open(spec['jsonl_path'], 'w');"
+        "f.write(json.dumps({'type': 'start', 'time': 0}) + '\\n' + '{\"type\": \"pre'); f.flush(); os._exit(1)"
+    )
+    hooks = Hooks(child_command=lambda spec: [sys.executable, "-c", script, str(spec)])
+    result = run(stub_config(["exact-stub"]), "smoke", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["children"][0]["status"] == "exit_nonzero"
+    assert result.record["status"] == "incomplete"
+
+
+def test_sigterm_during_a_child_keeps_its_completed_points(tmp_path):
+    timer = threading.Timer(4.0, os.kill, args=(os.getpid(), signal.SIGTERM))
+    timer.start()
+    try:
+        result = run(stub_config(["slow-stub"], ef_search=(10, 20)), "smoke", tmp_path, implementations=STUBS)
+    finally:
+        timer.cancel()
+    assert result.record["status"] == "aborted"
+    (child,) = result.record["children"]
+    assert child["status"] == "aborted"
+    assert child["partial"] is True
+    assert [point["ef_search"] for point in child["points"]] == [10]
+    assert not any("/raw/" in path for path in result.record["files"])
+
+
+@pytest.mark.parametrize("signum", [signal.SIGHUP, signal.SIGINT])
+def test_sighup_and_sigint_abort_and_still_write_run_json(tmp_path, signum):
+    calls = []
+
+    def command(spec):
+        calls.append(spec)
+        if len(calls) == 2:
+            os.kill(os.getpid(), signum)
+        return [sys.executable, "-m", "benchmarks.run_child", str(spec)]
+
+    previous_int = signal.signal(signal.SIGINT, signal.default_int_handler)
+    before = signal.getsignal(signal.SIGHUP)
+    try:
+        result = run(stub_config(["exact-stub"], seeds=(1, 2, 3)), "smoke", tmp_path, implementations=STUBS,
+                     hooks=Hooks(child_command=command))
+    finally:
+        signal.signal(signal.SIGINT, previous_int)
+    assert signal.getsignal(signal.SIGHUP) is before
+    assert result.record["status"] == "aborted"
+    assert (result.run_dir / "run.json").exists()
+
+
+def failing_snapshot(fail_on):
+    calls = []
+
+    def snapshot():
+        calls.append(1)
+        if len(calls) == fail_on:
+            raise ValueError("snapshot failed")
+        return fake_snapshot()
+
+    return snapshot
+
+
+def test_a_failing_end_snapshot_still_writes_run_json(tmp_path):
+    result = run(stub_config(["exact-stub"]), "smoke", tmp_path, implementations=STUBS,
+                 hooks=Hooks(snapshot=failing_snapshot(4)))
+    assert result.record["status"] == "complete"
+    assert "snapshot failed" in result.record["metadata"]["end"]["error"]
+
+
+def test_unexpected_errors_are_recorded_with_a_traceback_and_reraised(tmp_path):
+    with pytest.raises(ValueError, match="snapshot failed"):
+        run(stub_config(["exact-stub"]), "smoke", tmp_path, implementations=STUBS, hooks=Hooks(snapshot=failing_snapshot(2)))
+    (run_json,) = tmp_path.glob("*/run.json")
+    record = json.loads(run_json.read_text(encoding="utf-8"))
+    assert record["status"] == "error"
+    assert "ValueError" in record["traceback"]
+    assert not any(tmp_path.glob("*/run.json.tmp"))
+
+
+# ---- formal：前置檢查、重新確認與 load 門檻的接線 ----
+
+
+PREFLIGHT_CHECKS = ("check_lock", "check_git_clean", "check_config_committed", "check_venv", "check_versions",
+                    "check_build_info", "check_binding_fresh", "check_ac_power", "check_dataset_registered")
+
+
+@pytest.fixture
+def passing_environment(monkeypatch):
+    called = []
+    results = {"check_lock": "pid=1\n", "check_config_committed": {"path": "benchmarks/configs/x.toml"},
+               "check_dataset_registered": {}}
+    for name in PREFLIGHT_CHECKS:
+        def check(*args, _name=name, **kwargs):
+            called.append(_name)
+            return results.get(_name)
+        monkeypatch.setattr(environment, name, check)
+    monkeypatch.setattr(environment, "git_head", lambda repo: ("abc", 0))
+    monkeypatch.setattr(environment, "tracked_files", lambda repo: [])
+    monkeypatch.setattr(environment, "power_state", lambda: {"power_source": "AC Power"})
+    monkeypatch.setattr(environment, "read_lock_owner", lambda: (1, "pid=1\n"))
+    files = {"rust_hnsw": "a", "hnswlib": "b", "faiss": "c"}
+    digests = {"a": "1", "b": "2", "c": "3"}
+    monkeypatch.setattr(run_module, "extension_files", lambda: dict(files))
+    monkeypatch.setattr(environment, "sha256_file", lambda path: digests[path])
+    return called, digests
+
+
+def preflight_context():
+    return {"dataset": datasets.REGISTRY["smoke-gaussian"], "config_path": None, "config_text": ""}
+
+
+def test_formal_preflight_runs_every_check(passing_environment):
+    called, _ = passing_environment
+    checks = run_module.formal_preflight(preflight_context())
+    assert sorted(called) == sorted(PREFLIGHT_CHECKS)
+    assert checks["extension_sha256"] == {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"}
+
+
+@pytest.mark.parametrize("name", PREFLIGHT_CHECKS)
+def test_each_preflight_check_can_refuse(passing_environment, monkeypatch, name):
+    def refuse(*args, **kwargs):
+        raise PreflightError(f"{name} refused")
+
+    monkeypatch.setattr(environment, name, refuse)
+    with pytest.raises(PreflightError, match=name):
+        run_module.formal_preflight(preflight_context())
+
+
+def recheck_context():
+    return {"owner": "pid=1\n", "head": "abc", "extension_sha256": {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"}}
+
+
+def test_formal_recheck_passes_when_nothing_changed(passing_environment):
+    run_module.formal_recheck(recheck_context())
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [("owner", "owner"), ("head", "HEAD"), ("dirty", "dirty"), ("faiss", "faiss"), ("missing", "FileNotFoundError")],
+)
+def test_formal_recheck_detects_each_change(passing_environment, monkeypatch, change, message):
+    _, digests = passing_environment
+    if change == "owner":
+        monkeypatch.setattr(environment, "read_lock_owner", lambda: (2, "pid=2\n"))
+    elif change == "head":
+        monkeypatch.setattr(environment, "git_head", lambda repo: ("def", 0))
+    elif change == "dirty":
+        def dirty(repo):
+            raise PreflightError("working tree is dirty")
+        monkeypatch.setattr(environment, "check_git_clean", dirty)
+    elif change == "faiss":
+        digests["c"] = "changed"
+    else:
+        def missing(path):
+            raise FileNotFoundError(path)
+        monkeypatch.setattr(environment, "sha256_file", missing)
+    with pytest.raises(PreflightError, match=message):
+        run_module.formal_recheck(recheck_context())
+
+
+def test_formal_load_gate_is_checked_before_every_child(tmp_path):
+    loads = iter([1.0] + [9.0] * 1000)
+    clock = {"now": 0.0}
+    hooks = passing_formal_hooks(load_reader=lambda: next(loads), sleep=lambda s: clock.__setitem__("now", clock["now"] + s),
+                                 monotonic=lambda: clock["now"])
+    result = run(stub_config(["exact-stub"], seeds=(1, 2)), "formal", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["status"] == "aborted"
+    assert [c["status"] for c in result.record["children"]] == ["ok"]
+
+
+def test_formal_recheck_happens_after_waiting_for_load(tmp_path):
+    state = {"changed": False, "first": True}
+
+    def load():
+        if state["first"]:
+            state["first"] = False
+            state["changed"] = True  # 例如等待期間另一個 session 重新編譯了 binding
+            return 9.0
+        return 1.0
+
+    def recheck(context):
+        if state["changed"]:
+            raise PreflightError("rust_hnsw extension module changed during the run")
+
+    hooks = passing_formal_hooks(load_reader=load, formal_recheck=recheck, sleep=lambda s: None)
+    result = run(stub_config(["exact-stub"]), "formal", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["status"] == "invalid"
+    assert result.record["children"] == []
+
+
+def test_formal_recheck_runs_once_more_after_the_last_child(tmp_path):
+    calls = []
+
+    def recheck(context):
+        calls.append(1)
+        if len(calls) == 3:
+            raise PreflightError("HEAD changed during the run")
+
+    hooks = passing_formal_hooks(formal_recheck=recheck)
+    result = run(stub_config(["exact-stub"], seeds=(1, 2)), "formal", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["status"] == "invalid"
+    assert len(result.record["children"]) == 2

@@ -220,6 +220,7 @@ fn build_info(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     info.set_item("debug", env!("RUST_HNSW_BUILD_DEBUG"))?;
     info.set_item("debug_assertions", cfg!(debug_assertions))?;
     info.set_item("rustflags", env!("RUST_HNSW_BUILD_RUSTFLAGS"))?;
+    info.set_item("profile_env", env!("RUST_HNSW_BUILD_PROFILE_ENV"))?;
     info.set_item("rustc", env!("RUST_HNSW_BUILD_RUSTC"))?;
     Ok(info)
 }

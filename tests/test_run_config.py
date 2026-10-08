@@ -91,11 +91,28 @@ def test_multiple_sweeps_are_concatenated():
         (VALID.split("[[sweep]]")[0], "sweep"),
         (VALID + "\n[[sweep]]\nn = [300]\nm = [8]\nef_construction = [32]\nseeds = [2]\nshuffles = []\n", "duplicate build"),
         ("not = [valid toml", "TOML"),
+        (with_line("schema_version = 1", "schema_version = true"), "schema_version"),
+        (with_line("schema_version = 1", "schema_version = 1.0"), "schema_version"),
+        (with_line("seeds = [1, 2]", "seeds = []"), "empty"),
+        (with_line('["rust-hnsw", "hnswlib", "faiss-hnsw"]', "[]"), "implementations"),
+        (with_line('dataset = "smoke-gaussian"', "dataset = 3"), "dataset"),
+        (with_line('["rust-hnsw", "hnswlib", "faiss-hnsw"]', '["rust-hnsw", 3]'), "implementation"),
+        (VALID.replace("[[sweep]]", "[sweep]"), "sweep"),
     ],
 )
 def test_invalid_configs_are_rejected(text, message):
     with pytest.raises(ConfigError, match=message):
         parse_config(text)
+
+
+def test_config_boundaries_are_accepted():
+    text = with_line("n = [300, 600]", "n = [10]")
+    text = text.replace("m = [8]", "m = [2]").replace("ef_construction = [32]", "ef_construction = [2]")
+    text = text.replace("ef_search = [32, 10]", "ef_search = [10]").replace("seeds = [1, 2]", "seeds = [0]")
+    text = text.replace("shuffles = [7]", "shuffles = []")
+    config = parse_config(text)
+    assert config.builds == (Build(n=10, m=2, ef_construction=2, seed=0, shuffle=None),)
+    assert config.ef_search == (10,)
 
 
 def test_shuffles_may_be_empty():

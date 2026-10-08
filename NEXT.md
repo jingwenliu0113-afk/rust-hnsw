@@ -5,10 +5,9 @@
 **Core / Week 1 進行中**：
 
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
-  hnswlib / FAISS adapters（007）、benchmark runner（008，smoke 已驗證）、比較規則的事先登記（010）。
-  分析 / 報告腳本（`benchmarks/report.py`，依 010）。
-- 進行中：runner 實作的獨立審查（背景 workflow），之後修正。
-- 下一個需要使用者決定的事：第一個真實資料集（見 Blocked）。
+  hnswlib / FAISS adapters（007）、benchmark runner（008，含實作後審查）、比較規則（010）、報告腳本。
+- 使用者已決定資料集（2026-10-08）：標準 ANN 用 `glove-100-angular`；真實文字 workload 用公開文字 corpus + `google/embeddinggemma-2`。
+- 進行中：資料集 decision（011）→ GloVe loader → EmbeddingGemma 小型 pilot。
 
 尚未進 Advanced（Gate 條件都還沒有資料可判斷），沒有做任何 Optional。
 
@@ -28,7 +27,17 @@
 - `7fdf8d0 feat(benchmarks): add hnswlib and FAISS adapters with measured semantics`
 - `5625cc9 feat(benchmarks): add sample-based profiling workflow`
 - `2b783bd feat(benchmarks): add benchmark runner with pre-registered protocol`
-- `feat(benchmarks): add report generation for the pre-registered comparison rules`（本次）
+- `f4500ba feat(benchmarks): add report generation for the pre-registered comparison rules`
+- `beb8fd5 docs: record dataset proposal and idle-load attempt in NEXT`
+- `fix(benchmarks): harden runner after implementation review`（本次）
+
+## 最近完成：runner 實作後的審查
+
+- 三個角度（是否忠實落實 008 / 010、mutation testing、強健性），56 個 findings，各有一位驗證者重現或反駁；20 個照原建議、23 個修改、13 個駁回。摘要見 008 文末。
+- 主要修正：binding 新舊判斷改為也比對 tracked 原始碼的 mtime、formal config 必須已 commit、重新確認移到 load 等待之後並在最後再確認一次、
+  三個擴充模組都比對、thermal 解析改用 pmset 的實際格式（原本在本機永遠不會觸發）、新增 `memory`（phys_footprint）與 `power` 標記和 AC 電源檢查、
+  中止時保留進行中子 process 的已完成點、SIGHUP、收尾不會失敗、不記錄 `CARGO_*` 與看起來像機密的變數、build 層級的 load 標記。
+- 測試：補上 mutation 存活的部分（呼叫序列、計時邊界、記憶體時點、每一種標記的正向測試、formal 檢查的接線）。pytest 共 367 個。
 
 ## 最近完成：benchmark runner（decision 008、010）
 
@@ -60,27 +69,18 @@
 
 ## 下一步（依序）
 
-1. **runner 的獨立審查**（背景 workflow 執行中）：以 mutation 檢查測試鑑別力，並逐條對照 008 / 010；修正後另一個 commit。
+1. （已完成）runner 的獨立審查與修正。
 2. （已完成）分析 / 報告腳本。
 3. **閒置 load 的量測**（008 §2）：在沒有 lock holder、沒有其他重工作時量 10 分鐘，確認 4.0 的門檻；不符就另寫 decision log。
    - 2026-10-08 19:00 前後嘗試：incident-investigator 持有 heavy lock（soak），text-to-sql、agent-gym 各有 100% CPU 的 process，1 分鐘 load 約 7.8–8.2，無法量閒置基準。暫時 blocked，之後再試（只影響 formal run，不影響其他 Core 工作）。
-4. **第一個真實資料集**（需要使用者決定，見 Blocked）：決定後寫資料集 decision（來源、授權、SHA-256、子集規則），登記到 `benchmarks/datasets.py`。
+4. **資料集（使用者已決定）**：寫 decision 011 → GloVe loader（下載、轉 `.npy`、manifest、frozen ground truth）→
+   EmbeddingGemma 2 小型 pilot（公開文字 corpus、deterministic 且 disjoint 的 base / query、768d、bf16 或 fp32）。
 5. **第一張 recall vs efSearch 圖與正式 run**（formal config 先 commit，依 010 列出 variance 格點）。
 6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
 
 ## Blocked / 需要使用者決定
 
-- **資料集下載**（2026-10-08 已向使用者提出，等待決定）：SPEC 需要「標準 ANN 真實資料集」與「真實文本的現代 embedding」。
-  - 標準 ANN（ann-benchmarks 的 HDF5，repo 為 MIT；讀取需要小套件 `h5py`）：
-    - **glove-100-angular（建議）**：1,183,514 × 100、10k queries、463 MB；GloVe 為 PDDL v1.0。經典 angular 資料集，n 夠大，可以做巢狀子集的 scaling。
-    - nytimes-256-angular：290,000 × 256、10k queries、301 MB；維度較高、n 較小。
-    - glove-25-angular：121 MB，下載最小但只有 25 維。
-  - 真實文本 embedding：
-    - **KShivendu/dbpedia-entities-openai-1M（建議）**：MIT、OpenAI text-embedding-ada-002、1536 維、26 個 parquet（每個約 366 MB，共 9.5 GB）。
-      只下載前 3 個 shard（約 1.1 GB、約 11.5 萬筆）；沒有 query split，要以固定 seed 保留 1 萬筆作 queries 並從 train 排除（屬於資料切分，寫進資料集 decision）。讀取需要 `pyarrow`。
-    - Qdrant/dbpedia-entities-openai3-text-embedding-3-small-1024-100K：模型較新（text-embedding-3-small，1024 維）、662 MB，但資料集頁面沒有標示授權。
-    - 本機以開源模型自行產生（例如 bge-small-en-v1.5）：要安裝 PyTorch / sentence-transformers（約 1 GB）並多一個模型選擇的決策。
-  - 決定後：寫資料集 decision（來源、授權、SHA-256、子集與 query 規則）→ 轉成 `.npy` 並登記到 `benchmarks/datasets.py` → formal config。
+- 目前沒有需要使用者決定的事項。資料集已於 2026-10-08 決定（見「目前位置」）。
 
 ## 需要留意
 

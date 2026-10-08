@@ -38,13 +38,14 @@ def tie_aware_recall_at_k(found_ids, true_ids, data, queries, k: int, eps: float
     所有距離都在這裡以 f64 重新計算，不使用實作回報的距離。
     """
     found, true = _check_ids(found_ids, true_ids, k)
-    data64 = np.asarray(data, dtype=np.float64)
+    data = np.asarray(data)
     queries64 = np.asarray(queries, dtype=np.float64)
     if queries64.shape[0] != found.shape[0]:
         raise ValueError(f"number of queries differs: {queries64.shape[0]} vs {found.shape[0]}")
 
+    # 只把用到的列轉成 f64（不複製整份 data，避免大資料時的記憶體壓力，008 §8）。
     def exact_distance(column_ids: np.ndarray) -> np.ndarray:
-        return 1.0 - np.einsum("ij,ij->i", data64[column_ids], queries64)
+        return 1.0 - np.einsum("ij,ij->i", np.asarray(data[column_ids], dtype=np.float64), queries64)
 
     threshold = exact_distance(true[:, k - 1]) + eps
     hits = 0

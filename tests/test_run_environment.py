@@ -149,12 +149,14 @@ GOOD_BUILD = {
     "debug_assertions": False,
     # maturin 在 macOS 為擴充模組加上的連結旗標；不影響 codegen。
     "rustflags": "-C link-arg=-undefined -C link-arg=dynamic_lookup",
+    "profile_env": "",
     "rustc": "rustc 1.99.0",
 }
 
 
 def test_build_info_must_be_an_optimized_default_build():
     environment.check_build_info(GOOD_BUILD)
+    environment.check_build_info({**GOOD_BUILD, "profile_env": "CARGO_PROFILE_DEV_OPT_LEVEL=1"})
     environment.check_build_info({**GOOD_BUILD, "rustflags": ""})
     for key, value in [
         ("opt_level", "0"),
@@ -162,6 +164,8 @@ def test_build_info_must_be_an_optimized_default_build():
         ("rustflags", "-C link-arg=-undefined -C target-cpu=native"),
         ("rustflags", "-Ctarget-cpu=native"),
         ("rustflags", "-C lto=fat"),
+        ("profile_env", "CARGO_PROFILE_RELEASE_LTO=fat"),
+        ("profile_env", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true"),
     ]:
         with pytest.raises(PreflightError, match=key):
             environment.check_build_info({**GOOD_BUILD, key: value})
@@ -181,6 +185,91 @@ def test_binding_must_be_newer_than_head(tmp_path):
     environment.check_binding_fresh(so, head_commit_time=999)
     with pytest.raises(PreflightError, match="maturin develop --release"):
         environment.check_binding_fresh(so, head_commit_time=1001)
+
+
+def test_binding_must_be_newer_than_every_tracked_source(tmp_path):
+    so = tmp_path / "rust_hnsw.so"
+    so.write_bytes(b"x")
+    sources = [tmp_path / "lib.rs", tmp_path / "Cargo.toml"]
+    for path in sources:
+        path.write_text("x", encoding="utf-8")
+        os.utime(path, (900, 900))
+    os.utime(so, (1000, 1000))
+    environment.check_binding_fresh(so, 999, sources)
+    # 例如：改了原始碼、編譯、再 git checkout 還原 → 原始碼的 mtime 比 .so 新。
+    os.utime(sources[0], (1100, 1100))
+    with pytest.raises(PreflightError, match="lib.rs"):
+        environment.check_binding_fresh(so, 999, sources)
+
+
+def test_checkout_after_building_is_detected_in_a_real_repo(repo):
+    src = repo / "src.rs"
+    src.write_text("fn a() {}\n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "src")
+    _, head_time = environment.git_head(repo)
+    src.write_text("fn b() {}\n", encoding="utf-8")
+    so = repo.parent / "rust_hnsw.so"
+    so.write_bytes(b"built from uncommitted code")
+    os.utime(so, (head_time + 10, head_time + 10))
+    os.utime(src, (head_time + 5, head_time + 5))
+    git(repo, "checkout", "--", "src.rs")
+    os.utime(repo / "src.rs", (head_time + 20, head_time + 20))  # checkout 會寫檔，mtime 晚於 .so
+    with pytest.raises(PreflightError):
+        environment.check_binding_fresh(so, head_time, environment.tracked_files(repo, ["src.rs"]))
+    os.utime(so, (head_time + 30, head_time + 30))  # 在乾淨的 HEAD 上重新編譯
+    environment.check_binding_fresh(so, head_time, environment.tracked_files(repo, ["src.rs"]))
+
+
+def test_repo_binding_sources_are_tracked():
+    files = environment.tracked_files(REPO)
+    names = {str(p.relative_to(REPO)) for p in files}
+    assert {"crates/hnsw/src/hnsw.rs", "python/src/lib.rs", "python/build.rs", "Cargo.toml", "Cargo.lock"} <= names
+
+
+# ---- formal config 必須已 commit（008 §1.8） ----
+
+
+def committed_config(repo, text="schema_version = 1\n"):
+    path = repo / "benchmarks" / "configs" / "f.toml"
+    path.parent.mkdir(parents=True)
+    path.write_text(text, encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "config")
+    return path, text
+
+
+def test_committed_config_passes(repo):
+    path, text = committed_config(repo)
+    record = environment.check_config_committed(path, text, repo)
+    assert record["path"] == "benchmarks/configs/f.toml"
+    assert len(record["blob"]) == 40
+
+
+def test_config_must_be_committed_in_benchmarks_configs(repo, tmp_path):
+    path, text = committed_config(repo)
+    with pytest.raises(PreflightError, match="differs"):
+        environment.check_config_committed(path, text + "x = 1\n", repo)
+    untracked = repo / "benchmarks" / "configs" / "new.toml"
+    untracked.write_text(text, encoding="utf-8")
+    with pytest.raises(PreflightError, match="not committed"):
+        environment.check_config_committed(untracked, text, repo)
+    ignored = repo / "results" / "f.toml"
+    ignored.parent.mkdir()
+    ignored.write_text(text, encoding="utf-8")
+    with pytest.raises(PreflightError, match="benchmarks/configs"):
+        environment.check_config_committed(ignored, text, repo)
+    outside = tmp_path / "outside.toml"
+    outside.write_text(text, encoding="utf-8")
+    with pytest.raises(PreflightError, match="outside"):
+        environment.check_config_committed(outside, text, repo)
+    with pytest.raises(PreflightError, match="path"):
+        environment.check_config_committed(None, text, repo)
+
+
+def test_shipped_smoke_config_is_committed():
+    path = REPO / "benchmarks" / "configs" / "smoke.toml"
+    environment.check_config_committed(path, path.read_text(encoding="utf-8"), REPO)
 
 
 # ---- 資料集 ----
@@ -238,17 +327,24 @@ def test_thermal_output_without_warnings():
     assert environment.therm_warnings(NO_WARNING) == []
 
 
+# 格式取自本機 /usr/bin/pmset 的字串："Thermal Warning Level = %d"、"Performance Warning Level = %d"。
 @pytest.mark.parametrize(
     "text",
     [
+        "Thermal Warning Level = 5\n",
+        "Performance Warning Level = 100\n",
+        "Error:Failed to get thermal warning level with error code 0x00000001\n",
         "Thermal warning level set to 1.\n",
-        "Performance warning level set to 2.\n",
         "2026-10-08 CPU Power notify\n\tCPU_Scheduler_Limit \t= 100\n\tCPU_Available_CPUs \t= 12\n\tCPU_Speed_Limit \t= 80\n",
         "\tCPU_Scheduler_Limit = 90\n",
     ],
 )
 def test_thermal_warnings_are_detected(text):
     assert environment.therm_warnings(text) != []
+
+
+def test_warning_level_zero_means_normal():
+    assert environment.therm_warnings("Thermal Warning Level = 0\nPerformance Warning Level = 0\n") == []
 
 
 def test_full_speed_power_status_is_not_a_warning():
@@ -267,9 +363,27 @@ def test_compressor_pages_are_parsed():
     assert environment.parse_compressor_pages(text) == 816108
 
 
+def test_power_source_is_parsed_and_formal_needs_ac_power():
+    batt = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t80%; discharging\n"
+    assert environment.parse_power_source(batt) == "Battery Power"
+    assert environment.parse_power_source("Now drawing from 'AC Power'\n") == "AC Power"
+    environment.check_ac_power("AC Power")
+    with pytest.raises(PreflightError, match="AC power"):
+        environment.check_ac_power("Battery Power")
+
+
+def test_phys_footprint_tracks_new_allocations():
+    before = environment.phys_footprint_bytes()
+    block = np.ones(32 * 2**20 // 8)
+    after = environment.phys_footprint_bytes()
+    assert after - before > 16 * 2**20
+    del block
+
+
 def test_snapshot_records_the_hygiene_fields():
     snapshot = environment.snapshot()
-    assert set(snapshot) >= {"time", "loadavg", "therm", "therm_warnings", "swap_used_bytes", "compressor_pages"}
+    assert set(snapshot) >= {"time", "loadavg", "therm", "therm_warnings", "swap_used_bytes", "compressor_pages",
+                             "power_source"}
     assert len(snapshot["loadavg"]) == 3
 
 

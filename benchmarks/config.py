@@ -90,6 +90,8 @@ def parse_config(text: str, implementations=IMPLEMENTATIONS, registry=None) -> R
         raise ConfigError(f"schema_version must be 1, got {raw['schema_version']!r}")
 
     dataset = raw["dataset"]
+    if not isinstance(dataset, str):
+        raise ConfigError(f"dataset must be a string, got {dataset!r}")
     if dataset not in registry:
         raise ConfigError(f"unknown dataset {dataset!r}; registered: {sorted(registry)}")
 
@@ -97,6 +99,8 @@ def parse_config(text: str, implementations=IMPLEMENTATIONS, registry=None) -> R
     if not isinstance(names, list) or not names:
         raise ConfigError("implementations must be a non-empty list")
     for name in names:
+        if not isinstance(name, str):
+            raise ConfigError(f"implementation names must be strings, got {name!r}")
         if name not in implementations:
             raise ConfigError(f"unknown implementation {name!r}; expected one of {sorted(implementations)}")
     if len(set(names)) != len(names):
@@ -112,6 +116,8 @@ def parse_config(text: str, implementations=IMPLEMENTATIONS, registry=None) -> R
     builds: list[Build] = []
     for index, sweep in enumerate(sweeps):
         where = f"sweep #{index + 1}"
+        if not isinstance(sweep, dict):
+            raise ConfigError(f"{where} must be a table")
         _check_keys(sweep, _SWEEP_KEYS, where)
         ns = _int_list(sweep["n"], f"{where}: n", K)
         ms = _int_list(sweep["m"], f"{where}: m", 2, M_MAX)

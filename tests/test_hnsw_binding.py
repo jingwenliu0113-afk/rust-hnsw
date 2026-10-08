@@ -323,8 +323,9 @@ def test_exact_adapter_is_not_an_hnsw_index():
 
 def test_build_info_records_the_compile_settings():
     info = rust_hnsw.BUILD_INFO
-    assert set(info) == {"profile", "opt_level", "debug", "debug_assertions", "rustflags", "rustc"}
-    assert all(isinstance(info[key], str) for key in ("profile", "opt_level", "debug", "rustflags", "rustc"))
+    assert set(info) == {"profile", "opt_level", "debug", "debug_assertions", "rustflags", "profile_env", "rustc"}
+    strings = ("profile", "opt_level", "debug", "rustflags", "profile_env", "rustc")
+    assert all(isinstance(info[key], str) for key in strings)
     assert isinstance(info["debug_assertions"], bool)
     assert info["profile"] in {"debug", "release"}
     assert info["rustc"].startswith("rustc ")

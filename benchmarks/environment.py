@@ -4,6 +4,7 @@
 只讀取系統狀態，不修改任何系統設定，也不碰 lock 本身（不建立、不刪除）。
 """
 
+import ctypes
 import hashlib
 import os
 import platform
@@ -132,6 +133,13 @@ def _codegen_rustflags(rustflags: str) -> list[str]:
     return others
 
 
+# 會改變 release codegen 的 cargo 環境變數；build.rs 記錄在 BUILD_INFO["profile_env"]（008 §11）。
+PROFILE_OVERRIDES = tuple(
+    f"CARGO_PROFILE_RELEASE_{key}"
+    for key in ("LTO", "CODEGEN_UNITS", "OVERFLOW_CHECKS", "PANIC", "OPT_LEVEL", "DEBUG_ASSERTIONS", "CODEGEN_BACKEND")
+)
+
+
 def check_build_info(info: dict) -> None:
     """被量測的 binary 必須是 release 預設設定（008 §11）：opt-level 3、沒有 debug assertions、沒有 codegen 旗標。"""
     if info.get("opt_level") != "3":
@@ -141,14 +149,55 @@ def check_build_info(info: dict) -> None:
     extra = _codegen_rustflags(info.get("rustflags", ""))
     if extra:
         raise PreflightError(f"rust_hnsw was built with extra rustflags {extra}")
+    overrides = [item for item in info.get("profile_env", "").split() if item.split("=", 1)[0] in PROFILE_OVERRIDES]
+    if overrides:
+        raise PreflightError(f"rust_hnsw was built with profile_env overrides {overrides}")
 
 
-def check_binding_fresh(so_path, head_commit_time: int) -> None:
+# 編出 rust_hnsw 擴充模組的原始碼（008 §1.6）。
+BINDING_SOURCES = ("crates", "python", "Cargo.toml", "Cargo.lock")
+
+
+def tracked_files(repo, paths=BINDING_SOURCES) -> list[Path]:
+    listing = _run("git", "ls-files", "-z", "--", *paths, cwd=repo)
+    return [Path(repo) / name for name in listing.split("\0") if name]
+
+
+def check_binding_fresh(so_path, head_commit_time: int, source_paths=()) -> None:
+    """`.so` 必須晚於 HEAD 的 commit 時間，也晚於每個 tracked 原始碼檔（008 §1.6）。
+
+    git 的 checkout、stash、還原都會更新檔案的 mtime，所以「改了原始碼、編譯、再還原」會被擋下。
+    仍無法偵測從另一份 checkout 編譯、保留 mtime 複製進來的 binary（已知限制）。
+    """
+    hint = "run ./scripts/test.sh (maturin develop --release) on the clean HEAD first"
     mtime = Path(so_path).stat().st_mtime
     if mtime < head_commit_time:
-        raise PreflightError(
-            f"{so_path} is older than HEAD: run ./scripts/test.sh (maturin develop --release) on the clean HEAD first"
-        )
+        raise PreflightError(f"{so_path} is older than HEAD: {hint}")
+    newer = [Path(p) for p in source_paths if Path(p).stat().st_mtime > mtime]
+    if newer:
+        latest = max(newer, key=lambda p: p.stat().st_mtime)
+        raise PreflightError(f"{so_path} is older than {latest}: {hint}")
+
+
+def check_config_committed(path, text: str, repo) -> dict:
+    """formal 的 config 必須位於 benchmarks/configs/、已 commit，而且內容與 HEAD 相同（008 §1.8）。"""
+    if path is None:
+        raise PreflightError("formal runs need the config path to check that it is committed")
+    try:
+        rel = Path(path).resolve().relative_to(Path(repo).resolve())
+    except ValueError:
+        raise PreflightError(f"config {path} is outside the repository") from None
+    if rel.parts[:2] != ("benchmarks", "configs"):
+        raise PreflightError(f"config {rel} must live in benchmarks/configs/")
+    try:
+        committed = subprocess.run(
+            ["git", "show", f"HEAD:{rel.as_posix()}"], cwd=repo, check=True, capture_output=True
+        ).stdout
+    except subprocess.CalledProcessError:
+        raise PreflightError(f"config {rel} is not committed at HEAD") from None
+    if committed != text.encode("utf-8"):
+        raise PreflightError(f"config {rel} differs from the committed version")
+    return {"path": rel.as_posix(), "blob": _run("git", "rev-parse", f"HEAD:{rel.as_posix()}", cwd=repo).strip()}
 
 
 def check_dataset_registered(dataset) -> dict[str, str]:
@@ -182,6 +231,26 @@ def ru_maxrss_bytes() -> int:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 
+def phys_footprint_bytes() -> int:
+    """macOS 的 phys_footprint（含被壓縮的 page，rss 不含）；`proc_pid_rusage(RUSAGE_INFO_V2)` 的第 9 個 uint64。"""
+    buf = (ctypes.c_uint64 * 64)()
+    if _libproc().proc_pid_rusage(os.getpid(), 2, ctypes.byref(buf)) != 0:
+        raise OSError("proc_pid_rusage failed")
+    return int(buf[9])
+
+
+_LIBPROC = None
+
+
+def _libproc():
+    global _LIBPROC
+    if _LIBPROC is None:
+        _LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib")
+    return _LIBPROC
+
+
+# pmset 的實際格式為 "Thermal Warning Level = %d" / "Performance Warning Level = %d"，0 代表正常。
+_LEVEL = re.compile(r"(?:thermal|performance) warning level\s*(?:=|set to)\s*(-?\d+)", re.IGNORECASE)
 _LIMIT = re.compile(r"CPU_(?:Speed|Scheduler)_Limit\s*=\s*(\d+)")
 
 
@@ -189,12 +258,32 @@ def therm_warnings(text: str) -> list[str]:
     warnings = []
     for line in text.splitlines():
         stripped = line.strip()
-        if "warning level" in stripped and not stripped.startswith("Note: No "):
+        level = _LEVEL.search(stripped)
+        if level is not None:
+            if int(level.group(1)) != 0:
+                warnings.append(stripped)
+        elif "warning level" in stripped.lower() and not stripped.startswith("Note: No "):
+            # 無法解析等級（例如讀取失敗的錯誤訊息）：保守地視為警告。
             warnings.append(stripped)
-        match = _LIMIT.search(stripped)
-        if match and int(match.group(1)) < 100:
+        limit = _LIMIT.search(stripped)
+        if limit and int(limit.group(1)) < 100:
             warnings.append(stripped)
     return warnings
+
+
+def parse_power_source(batt_text: str) -> str:
+    match = re.search(r"Now drawing from '([^']+)'", batt_text)
+    return match.group(1) if match else batt_text.strip()
+
+
+def power_state() -> dict:
+    batt = _run("pmset", "-g", "batt")
+    return {"pmset": _run("pmset", "-g"), "pmset_batt": batt, "power_source": parse_power_source(batt)}
+
+
+def check_ac_power(power_source: str) -> None:
+    if power_source != "AC Power":
+        raise PreflightError(f"formal runs need AC power, currently drawing from {power_source!r}")
 
 
 def parse_swap_used(text: str) -> int:
@@ -222,6 +311,7 @@ def snapshot() -> dict:
         "therm_warnings": therm_warnings(therm),
         "swap_used_bytes": parse_swap_used(_run("sysctl", "vm.swapusage")),
         "compressor_pages": parse_compressor_pages(_run("vm_stat")),
+        "power_source": parse_power_source(_run("pmset", "-g", "batt")),
     }
 
 
@@ -257,6 +347,5 @@ def machine_metadata() -> dict:
         "memory_bytes": int(_sysctl("hw.memsize")),
         "os": platform.platform(),
         "os_version": _run("sw_vers").strip(),
-        "pmset": _run("pmset", "-g"),
-        "pmset_batt": _run("pmset", "-g", "batt"),
+        **power_state(),
     }

@@ -37,6 +37,10 @@ LOAD_POLL_S = 15
 SINGLE_THREAD_RELATIVE = 0.02
 SINGLE_THREAD_ABSOLUTE_S = 0.001
 
+# 「phys_footprint 增量超過 rss 增量」的容許值：超過代表 build 期間有 page 被壓縮，rss 低估了 index 記憶體（008 §8）。
+MEMORY_RELATIVE = 0.02
+MEMORY_ABSOLUTE_BYTES = 1 << 20
+
 LOCK_DIR = "/tmp/ai-portfolio-mac-heavy.lock"
 
 
@@ -59,9 +63,14 @@ def protocol_record() -> dict:
         "load_wait_s": LOAD_WAIT_S,
         "load_poll_s": LOAD_POLL_S,
         "single_thread_tolerance": {"relative": SINGLE_THREAD_RELATIVE, "absolute_s": SINGLE_THREAD_ABSOLUTE_S},
+        "memory_tolerance": {"relative": MEMORY_RELATIVE, "absolute_bytes": MEMORY_ABSOLUTE_BYTES},
         "tie_eps": TIE_EPS,
     }
 
 
 def exceeds_single_thread_tolerance(other_thread_cpu_s: float, process_cpu_s: float) -> bool:
     return other_thread_cpu_s > SINGLE_THREAD_RELATIVE * process_cpu_s + SINGLE_THREAD_ABSOLUTE_S
+
+
+def exceeds_memory_tolerance(footprint_delta: int, rss_delta: int) -> bool:
+    return footprint_delta - rss_delta > MEMORY_RELATIVE * footprint_delta + MEMORY_ABSOLUTE_BYTES

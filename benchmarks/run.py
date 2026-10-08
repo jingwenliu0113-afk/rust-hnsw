@@ -14,6 +14,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -21,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,8 +37,13 @@ from benchmarks.interface import prepare_vectors
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO / "results" / "runs"
-# 寫入 run.json 的環境變數（008 §5）；其他變數不記錄，避免寫出不相干的機密。
-CHILD_ENV_PREFIXES = ("OMP_", "KMP_", "RUSTFLAGS", "CARGO_", "PYTHON", "VIRTUAL_ENV")
+# 寫入 run.json 的環境變數（008 §5）：會影響子 process 執行緒、allocator、動態連結的變數。
+# 其他變數不記錄；名稱看起來像機密的也不記錄（例如 CARGO_REGISTRY_TOKEN）。
+CHILD_ENV_PREFIXES = ("OMP_", "KMP_", "RUSTFLAGS", "PYTHON", "VIRTUAL_ENV", "DYLD_", "Malloc", "MALLOC_", "VECLIB_",
+                      "OPENBLAS_")
+_SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSW|CREDENTIAL|AUTH|_KEY", re.IGNORECASE)
+# 收尾寫出 run.json 期間暫時忽略的訊號（008 §5）。
+_ABORT_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 # formal 模式比對 requirements-dev.txt 的 pin（007 的語意是在這些版本上實測的）。
 VERSION_CHECKED = ("hnswlib", "faiss-cpu", "numpy", "maturin")
 # 007 §8：報告時要一起呈現的 distance kernel 事實。
@@ -76,35 +83,46 @@ def extension_files() -> dict[str, str]:
     }
 
 
+def _extension_digests() -> dict[str, str]:
+    return {name: environment.sha256_file(path) for name, path in extension_files().items()}
+
+
 def formal_preflight(context: dict) -> dict:
     """008 §1 的全部前置檢查；任一項不符就 raise PreflightError（不寫任何輸出）。"""
     import rust_hnsw
 
     owner = environment.check_lock()
     environment.check_git_clean(REPO)
+    config = environment.check_config_committed(context.get("config_path"), context["config_text"], REPO)
     environment.check_venv(sys.prefix, REPO)
     pins = environment.parse_pins((REPO / "requirements-dev.txt").read_text(encoding="utf-8"))
     environment.check_versions({name: pins[name] for name in VERSION_CHECKED}, importlib.metadata.version)
     environment.check_build_info(rust_hnsw.BUILD_INFO)
     head, head_time = environment.git_head(REPO)
-    so_path = extension_files()["rust_hnsw"]
-    environment.check_binding_fresh(so_path, head_time)
+    environment.check_binding_fresh(extension_files()["rust_hnsw"], head_time, environment.tracked_files(REPO))
+    environment.check_ac_power(environment.power_state()["power_source"])
     digests = environment.check_dataset_registered(context["dataset"])
-    context.update(owner=owner, head=head, so_sha256=environment.sha256_file(so_path))
-    return {"lock_owner": owner, "head": head, "rust_hnsw_sha256": context["so_sha256"], "dataset_sha256": digests}
+    context.update(owner=owner, head=head, extension_sha256=_extension_digests())
+    return {"lock_owner": owner, "head": head, "config": config, "extension_sha256": context["extension_sha256"],
+            "dataset_sha256": digests}
 
 
 def formal_recheck(context: dict) -> None:
-    """每個子 process 啟動前重新確認（008 §1）：lock、HEAD、工作目錄、被量測的 binary 都沒有變。"""
-    _, owner = environment.read_lock_owner()
-    if owner != context["owner"]:
-        raise PreflightError("lock owner.txt changed during the run")
-    head, _ = environment.git_head(REPO)
-    if head != context["head"]:
-        raise PreflightError(f"HEAD changed during the run: {context['head']} -> {head}")
-    environment.check_git_clean(REPO)
-    if environment.sha256_file(extension_files()["rust_hnsw"]) != context["so_sha256"]:
-        raise PreflightError("rust_hnsw extension module changed during the run")
+    """每個子 process 啟動前與 run 結束時重新確認（008 §1）：lock、HEAD、工作目錄、三個擴充模組都沒有變。"""
+    try:
+        _, owner = environment.read_lock_owner()
+        if owner != context["owner"]:
+            raise PreflightError("lock owner.txt changed during the run")
+        head, _ = environment.git_head(REPO)
+        if head != context["head"]:
+            raise PreflightError(f"HEAD changed during the run: {context['head']} -> {head}")
+        environment.check_git_clean(REPO)
+        for name, digest in _extension_digests().items():
+            if digest != context["extension_sha256"][name]:
+                raise PreflightError(f"{name} extension module changed during the run")
+    except (OSError, subprocess.CalledProcessError) as err:
+        # 例如擴充模組重新安裝期間短暫不存在：視為狀態改變，而不是 runner 的錯誤。
+        raise PreflightError(f"formal recheck failed: {err!r}") from err
 
 
 @dataclass
@@ -151,7 +169,7 @@ def _dataset_record(dataset, train: np.ndarray, queries: np.ndarray) -> dict:
     return record
 
 
-def _metadata(formal_checks, snapshot: dict) -> dict:
+def _metadata(formal_checks, snapshot: dict, child_env: dict) -> dict:
     import faiss
     import rust_hnsw
 
@@ -175,28 +193,33 @@ def _metadata(formal_checks, snapshot: dict) -> dict:
             "monotonic": clock.monotonic,
             "adjustable": clock.adjustable,
         },
-        "child_env": {k: v for k, v in sorted(os.environ.items()) if k.startswith(CHILD_ENV_PREFIXES)},
+        "child_env": recorded_env(child_env),
         "formal_checks": formal_checks,
         "start": {**snapshot, "top_processes": environment.top_processes()},
         "end": None,
     }
 
 
-def _provided_gt_agreement(dataset, loaded, n: int, n_train: int, gt: np.ndarray) -> dict:
+def recorded_env(env: dict) -> dict:
+    """實際傳給子 process 的環境中，要寫進 run.json 的變數（008 §5）。"""
+    return {k: v for k, v in sorted(env.items()) if k.startswith(CHILD_ENV_PREFIXES) and not _SECRET_NAME.search(k)}
+
+
+def _provided_gt_agreement(dataset, provided, n: int, n_train: int, gt: np.ndarray) -> dict:
     """資料集自帶的 ground truth 只在條件成立時比對（008 §4）；只作 sanity check。"""
-    if loaded.provided_neighbors is None:
+    if provided is None:
         return {"status": "not_applicable", "reason": "dataset has no provided ground truth"}
     if dataset.metric not in ("angular", "cosine"):
         return {"status": "not_applicable", "reason": f"dataset metric is {dataset.metric}"}
     if n != n_train:
         return {"status": "not_applicable", "reason": "n is a subset of train"}
-    provided = np.asarray(loaded.provided_neighbors)
+    provided = np.asarray(provided)
     if provided.shape[0] != gt.shape[0] or provided.shape[1] < protocol.K:
         return {"status": "not_applicable", "reason": f"provided ground truth has shape {provided.shape}"}
     return {"status": "computed", "recall_of_provided_at_10": evaluate.recall_at_k(provided, gt, protocol.K)}
 
 
-def _prepare_subsets(config, dataset, loaded, train, queries, run_dir: Path) -> tuple[dict, dict]:
+def _prepare_subsets(config, dataset, provided, train, queries, run_dir: Path) -> tuple[dict, dict]:
     """每個 n 的 ground truth 與資料集檢查；全部在第一個子 process 啟動前完成（008 §4）。"""
     import rust_hnsw
 
@@ -217,7 +240,7 @@ def _prepare_subsets(config, dataset, loaded, train, queries, run_dir: Path) -> 
             "duplicate_row_fraction": evaluate.duplicate_row_fraction(subset),
             "rank1_tie_queries": evaluate.rank1_tie_queries(subset, queries, gt),
             "tie_eps": protocol.TIE_EPS,
-            "provided_gt_agreement": _provided_gt_agreement(dataset, loaded, n, train.shape[0], gt),
+            "provided_gt_agreement": _provided_gt_agreement(dataset, provided, n, train.shape[0], gt),
         }
     return records, gts
 
@@ -325,14 +348,27 @@ def _child_record(lines: list[dict], build_params: dict) -> tuple[dict, dict]:
     if prelude is not None:
         build["baseline"] = prelude["baseline"]
     if built is not None:
-        baseline = prelude["baseline"]
+        baseline, after = prelude["baseline"], built["after_build"]
+        index_memory = after["rss_bytes"] - baseline["rss_bytes"]
+        index_footprint = after["phys_footprint_bytes"] - baseline["phys_footprint_bytes"]
+        flags = []
+        # build 結束時的 load 超過門檻：build time 與記憶體在高負載下量到（008 §9）。
+        if built["loadavg_end"][0] > protocol.MAX_LOAD_1MIN:
+            flags.append("load")
+        # phys_footprint 的增量明顯大於 rss 的增量：build 期間有 page 被壓縮，rss 低估了 index 記憶體（008 §8）。
+        if protocol.exceeds_memory_tolerance(index_footprint, index_memory):
+            flags.append("memory")
         build.update(
             build_ns=built["build_ns"],
             other_thread_cpu=built["other_thread_cpu"],
             peak_rss_bytes=built["peak_rss_bytes"],
             peak_rss_minus_baseline_bytes=built["peak_rss_bytes"] - baseline["ru_maxrss_bytes"],
-            after_build=built["after_build"],
-            index_memory_bytes=built["after_build"]["rss_bytes"] - baseline["rss_bytes"],
+            after_build=after,
+            index_memory_bytes=index_memory,
+            index_footprint_bytes=index_footprint,
+            loadavg_start=built["loadavg_start"],
+            loadavg_end=built["loadavg_end"],
+            flags=flags,
         )
     if end is not None:
         build.update(
@@ -345,13 +381,14 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
                perm, perm_sha, gt, subset, queries, run_dir, child_env) -> dict:
     child_id = f"g{group:03d}-{name}"
     if mode == "formal":
-        hooks.formal_recheck(context)
         ok, samples = environment.wait_for_load(
             hooks.load_reader, protocol.MAX_LOAD_1MIN, protocol.LOAD_WAIT_S, protocol.LOAD_POLL_S,
             hooks.sleep, hooks.monotonic,
         )
         if not ok:
             raise RunAborted(f"load average stayed above {protocol.MAX_LOAD_1MIN} for {protocol.LOAD_WAIT_S} s")
+        # 等待 load 期間可能有其他 session 重新編譯：重新確認放在等待之後、啟動子 process 之前。
+        hooks.formal_recheck(context)
         load_gate = {"enforced": True, "ok": True, "samples": samples}
     else:
         load_gate = {"enforced": False, "ok": None, "samples": [(0.0, hooks.load_reader())]}
@@ -381,15 +418,23 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
     before = hooks.snapshot()
     started = time.time()
     returncode = None
-    with open(child_dir / "log.txt", "w", encoding="utf-8") as log:
-        try:
-            proc = subprocess.run(
-                argv, cwd=REPO, env=child_env, stdout=log, stderr=subprocess.STDOUT, timeout=config.child_timeout_s
-            )
-            returncode = proc.returncode
-            status = "ok" if returncode == 0 else ("signal" if returncode < 0 else "exit_nonzero")
-        except subprocess.TimeoutExpired:
-            status = "timeout"
+    interrupted = None
+    try:
+        with open(child_dir / "log.txt", "w", encoding="utf-8") as log:
+            try:
+                proc = subprocess.run(
+                    argv, cwd=REPO, env=child_env, stdout=log, stderr=subprocess.STDOUT, timeout=config.child_timeout_s
+                )
+                returncode = proc.returncode
+                status = "ok" if returncode == 0 else ("signal" if returncode < 0 else "exit_nonzero")
+            except subprocess.TimeoutExpired:
+                status = "timeout"
+            except (RunAborted, KeyboardInterrupt) as err:
+                # subprocess.run 已 kill 子 process；照常收集它已完成的點，再把中止往上傳（010 §3）。
+                status, interrupted = "aborted", err
+    except BaseException:
+        shutil.rmtree(raw_dir, ignore_errors=True)
+        raise
     ended = time.time()
     after = hooks.snapshot()
 
@@ -411,13 +456,15 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
         flags.append("thermal")
     if after["swap_used_bytes"] > before["swap_used_bytes"]:
         flags.append("swap")
+    if before["power_source"] != "AC Power" or after["power_source"] != "AC Power":
+        flags.append("power")
     cpu = build_record.get("other_thread_cpu")
     if cpu is not None and _exceeds(cpu["other_s"], cpu["process_s"]):
         flags.append("multithread")
 
     prelude = parts["prelude"] or {}
     samples_file = child_dir / "samples.npz"
-    return {
+    record = {
         "child_id": child_id,
         "group": group,
         "implementation": name,
@@ -438,6 +485,7 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
         "log": str((child_dir / "log.txt").relative_to(run_dir)),
         "points": points,
     }
+    return record, interrupted
 
 
 def _file_digests(run_dir: Path) -> dict[str, str]:
@@ -449,12 +497,25 @@ def _file_digests(run_dir: Path) -> dict[str, str]:
 
 
 def _raise_aborted(signum, frame):
+    if signum == signal.SIGINT:
+        raise KeyboardInterrupt
     raise RunAborted(f"received signal {signal.Signals(signum).name}")
 
 
+def _try(fn) -> dict:
+    """收尾時的紀錄失敗不得讓 run.json 寫不出來。"""
+    try:
+        return fn()
+    except Exception as err:  # noqa: BLE001
+        return {"error": repr(err)}
+
+
 def run(config_text: str, mode: str, output_root, *, implementations=IMPLEMENTATIONS, registry=None,
-        hooks: Hooks | None = None) -> RunResult:
-    """執行一次 run。config 或 formal 前置檢查不符時 raise（ConfigError / PreflightError），不寫任何輸出。"""
+        hooks: Hooks | None = None, config_path=None) -> RunResult:
+    """執行一次 run。config 或 formal 前置檢查不符時 raise（ConfigError / PreflightError），不寫任何輸出。
+
+    formal 模式需要 `config_path`，以確認 config 已 commit（008 §1）。
+    """
     if mode not in ("smoke", "formal"):
         raise ValueError(f"mode must be 'smoke' or 'formal', got {mode!r}")
     hooks = hooks or Hooks()
@@ -462,13 +523,17 @@ def run(config_text: str, mode: str, output_root, *, implementations=IMPLEMENTAT
     config = parse_config(config_text, implementations, registry)
     dataset = registry[config.dataset]
 
-    context = {"dataset": dataset}
+    context = {"dataset": dataset, "config_path": config_path, "config_text": config_text}
     formal_checks = hooks.formal_preflight(context) if mode == "formal" else None
 
     loaded = datasets.load(dataset)
     train = prepare_vectors(loaded.train)
     queries = prepare_vectors(loaded.queries)
+    provided = loaded.provided_neighbors
+    # 原始陣列不再需要：避免父 process 在子 process 量測期間多持有一份完整的 train（008 §4）。
+    del loaded
     check_dataset_fit(config, train.shape[0], queries.shape[0])
+    child_env = dict(os.environ)
 
     run_dir = _new_run_dir(Path(output_root), mode)
     (run_dir / "points").mkdir()
@@ -479,12 +544,13 @@ def run(config_text: str, mode: str, output_root, *, implementations=IMPLEMENTAT
         "mode": mode,
         "protocol": protocol.protocol_record(),
         "config": {
+            "path": None if config_path is None else str(config_path),
             "text": config.text,
             "sha256": hashlib.sha256(config.text.encode("utf-8")).hexdigest(),
             "parsed": config.raw,
         },
         "dataset": _dataset_record(dataset, train, queries),
-        "metadata": _metadata(formal_checks, hooks.snapshot()),
+        "metadata": _metadata(formal_checks, hooks.snapshot(), child_env),
         "subsets": {},
         "execution_order": [
             {"group": group, **asdict(build), "implementations": list(names)} for group, build, names in order
@@ -494,12 +560,14 @@ def run(config_text: str, mode: str, output_root, *, implementations=IMPLEMENTAT
     }
 
     scratch = Path(tempfile.mkdtemp(prefix="rust-hnsw-run-"))
-    child_env = dict(os.environ)
     in_main_thread = threading.current_thread() is threading.main_thread()
-    previous_handler = signal.signal(signal.SIGTERM, _raise_aborted) if in_main_thread else None
+    previous = {sig: signal.getsignal(sig) for sig in _ABORT_SIGNALS} if in_main_thread else {}
+    if in_main_thread:
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            signal.signal(sig, _raise_aborted)
     error = None
     try:
-        record["subsets"], gts = _prepare_subsets(config, dataset, loaded, train, queries, run_dir)
+        record["subsets"], gts = _prepare_subsets(config, dataset, provided, train, queries, run_dir)
         queries_path = scratch / "queries.npy"
         np.save(queries_path, queries)
         for group, build, names in order:
@@ -515,7 +583,7 @@ def run(config_text: str, mode: str, output_root, *, implementations=IMPLEMENTAT
             del data
             try:
                 for name in names:
-                    child = _run_child(
+                    child, interrupted = _run_child(
                         mode=mode, group=group, build=build, name=name, implementations=implementations,
                         config=config, context=context, hooks=hooks, scratch=scratch, data_path=data_path,
                         queries_path=queries_path, perm=perm, perm_sha=perm_sha, gt=gts[build.n], subset=subset,
@@ -524,8 +592,13 @@ def run(config_text: str, mode: str, output_root, *, implementations=IMPLEMENTAT
                     record["children"].append(child)
                     if child["status"] != "ok":
                         record["status_reasons"].append(f"{child['child_id']}: {child['status']}")
+                    if interrupted is not None:
+                        raise interrupted
             finally:
                 data_path.unlink(missing_ok=True)
+        if mode == "formal":
+            # 最後一個子 process 啟動之後的改變也要能發現（008 §1）。
+            hooks.formal_recheck(context)
         record["status"] = "incomplete" if record["status_reasons"] else "complete"
     except PreflightError as err:
         record["status"] = "invalid"
@@ -536,15 +609,26 @@ def run(config_text: str, mode: str, output_root, *, implementations=IMPLEMENTAT
     except BaseException as err:
         record["status"] = "error"
         record["status_reasons"].append(f"error: {err!r}")
+        record["traceback"] = traceback.format_exc()
         error = err
     finally:
+        # 收尾期間忽略中止訊號，確保 run.json 一定寫得出來；寫完才還原原本的 handler。
         if in_main_thread:
-            signal.signal(signal.SIGTERM, previous_handler)
-        shutil.rmtree(scratch, ignore_errors=True)
-        record["metadata"]["end"] = {**hooks.snapshot(), "top_processes": environment.top_processes()}
-        record["files"] = _file_digests(run_dir)
-        text = json.dumps(record, indent=1, ensure_ascii=False)
-        (run_dir / "run.json").write_text(text, encoding="utf-8")
+            for sig in _ABORT_SIGNALS:
+                signal.signal(sig, signal.SIG_IGN)
+        try:
+            shutil.rmtree(scratch, ignore_errors=True)
+            record["metadata"]["end"] = _try(
+                lambda: {**hooks.snapshot(), **environment.power_state(), "top_processes": environment.top_processes()}
+            )
+            record["files"] = _try(lambda: _file_digests(run_dir))
+            text = json.dumps(record, indent=1, ensure_ascii=False)
+            temporary = run_dir / "run.json.tmp"
+            temporary.write_text(text, encoding="utf-8")
+            os.replace(temporary, run_dir / "run.json")
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
     if error is not None:
         raise error
     return RunResult(exit_code=0 if record["status"] == "complete" else 1, run_dir=run_dir, record=json.loads(text))
@@ -558,7 +642,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     text = Path(args.config).read_text(encoding="utf-8")
     try:
-        result = run(text, args.mode, Path(args.output_root))
+        result = run(text, args.mode, Path(args.output_root), config_path=Path(args.config))
     except ConfigError as err:
         print(f"config error: {err}", file=sys.stderr)
         return 2

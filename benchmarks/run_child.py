@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from benchmarks import protocol
-from benchmarks.environment import ps_rss_bytes, ru_maxrss_bytes
+from benchmarks.environment import phys_footprint_bytes, ps_rss_bytes, ru_maxrss_bytes
 from benchmarks.interface import IncompleteResultsError, check_search_result
 
 MEASURED_LIBRARIES = ("rust_hnsw", "hnswlib", "faiss")
@@ -49,7 +49,8 @@ def _cpu_split(fn):
 
 
 def _memory() -> dict:
-    return {"rss_bytes": ps_rss_bytes(), "ru_maxrss_bytes": ru_maxrss_bytes()}
+    # phys_footprint 含被壓縮的 page（rss 不含），用來偵測記憶體壓力下 rss 的低估（008 §8）。
+    return {"rss_bytes": ps_rss_bytes(), "ru_maxrss_bytes": ru_maxrss_bytes(), "phys_footprint_bytes": phys_footprint_bytes()}
 
 
 def _percentiles(samples) -> dict:
@@ -207,6 +208,7 @@ def main(argv=None) -> int:
         adapter.build(data)
         build_ns = perf_counter_ns() - start
 
+    loadavg_start = list(os.getloadavg())
     _, build_other, build_process = _cpu_split(timed_build)
     peak_rss = ru_maxrss_bytes()
     after_build = _memory()
@@ -216,6 +218,8 @@ def main(argv=None) -> int:
         other_thread_cpu={"other_s": build_other, "process_s": build_process},
         peak_rss_bytes=peak_rss,
         after_build=after_build,
+        loadavg_start=loadavg_start,
+        loadavg_end=list(os.getloadavg()),
     )
 
     # 7. 每個 ef 點。

@@ -8,6 +8,17 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=RUSTFLAGS");
     println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
+    for key in [
+        "LTO",
+        "CODEGEN_UNITS",
+        "OVERFLOW_CHECKS",
+        "PANIC",
+        "OPT_LEVEL",
+        "DEBUG_ASSERTIONS",
+        "CODEGEN_BACKEND",
+    ] {
+        println!("cargo:rerun-if-env-changed=CARGO_PROFILE_RELEASE_{key}");
+    }
 
     for key in ["PROFILE", "OPT_LEVEL", "DEBUG"] {
         let value = env::var(key).unwrap_or_default();
@@ -18,6 +29,18 @@ fn main() {
         .unwrap_or_default()
         .replace('\x1f', " ");
     println!("cargo:rustc-env=RUST_HNSW_BUILD_RUSTFLAGS={rustflags}");
+
+    // 以環境變數覆寫的 cargo profile 設定（例如 CARGO_PROFILE_RELEASE_LTO）。
+    // cargo 設定檔中的 [profile] 無法從這裡觀察（008 §11 的已知限制）。
+    let mut overrides: Vec<String> = env::vars()
+        .filter(|(key, _)| key.starts_with("CARGO_PROFILE_"))
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect();
+    overrides.sort();
+    println!(
+        "cargo:rustc-env=RUST_HNSW_BUILD_PROFILE_ENV={}",
+        overrides.join(" ")
+    );
 
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
     let version = Command::new(rustc)

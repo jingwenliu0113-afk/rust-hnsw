@@ -17,7 +17,8 @@ from pathlib import Path
 import numpy as np
 
 TARGETS = (0.90, 0.95, 0.99)
-HYGIENE_FLAGS = ("load", "thermal", "swap", "multithread", "nondeterministic")
+# 008 §9 的 hygiene 標記；子 process、build、點三層的標記都合併到點上（010 §3）。
+HYGIENE_FLAGS = ("load", "thermal", "swap", "multithread", "nondeterministic", "power", "memory")
 BASELINE = "rust-hnsw"
 ORDER_NOTE = {
     "faiss-hnsw": "FAISS 的實際插入順序不是 row 順序（007 §5）：打亂 row 只改變 id 與 level 的對應，意義與另外兩者不同，不並列比較。",
@@ -51,7 +52,7 @@ def point_rows(records: list[dict]) -> list[dict]:
             for point in child["points"]:
                 k10, k1 = point["k10"], point["k1"]
                 ok = k10["status"] == "ok"
-                flags = sorted({*child["flags"], *point["flags"]} & set(HYGIENE_FLAGS))
+                flags = sorted({*child["flags"], *build.get("flags", []), *point["flags"]} & set(HYGIENE_FLAGS))
                 rows.append({
                     "implementation": child["implementation"],
                     "n": build["n"],
@@ -111,7 +112,7 @@ def _reading(aggregates: list[dict], target: float) -> dict:
             return None
         chosen = best(candidates, key=lambda a: a[metric]["median"])
         return {"value": chosen[metric]["median"], "m": chosen["m"], "ef_construction": chosen["ef_construction"],
-                "ef_search": chosen["ef_search"], "incomplete": chosen["incomplete"]}
+                "ef_search": chosen["ef_search"], "incomplete": chosen["incomplete"], "builds": chosen["builds"]}
 
     return {"reached": True, "qps": pick("qps", max), "p50_ns": pick("p50_ns", min), "p95_ns": pick("p95_ns", min),
             "index_memory_bytes": pick("index_memory_bytes", min)}
@@ -188,20 +189,38 @@ def order_variance(rows: list[dict]) -> list[dict]:
     return entries
 
 
-def scaling(rows: list[dict]) -> list[dict]:
-    """固定 (M, efC) 下，每個 n 的 build time、peak RSS、index memory（每個 build 計一次）。"""
-    builds = {}
-    for row in rows:
-        if row["shuffle"] is None:
-            builds[(row["implementation"], row["n"], row["m"], row["ef_construction"], row["seed"])] = row
+def build_rows(records: list[dict]) -> list[dict]:
+    """每個（build、實作）一列，原始插入順序；標記取子 process 與 build 兩層（點層級的標記與 build 量測無關）。"""
+    rows = []
+    for record in records:
+        for child in record["children"]:
+            build = child["build"]
+            if build["shuffle"] is not None or build.get("build_ns") is None:
+                continue
+            rows.append({**{k: build[k] for k in ("n", "m", "ef_construction", "seed")},
+                         "implementation": child["implementation"],
+                         **{metric: build.get(metric) for metric in BUILD_METRICS},
+                         "flags": sorted({*child["flags"], *build.get("flags", [])} & set(HYGIENE_FLAGS))})
+    return rows
+
+
+def scaling(builds: list[dict]) -> list[dict]:
+    """固定 (M, efC) 下，每個 n 的 build time、peak RSS、index memory（010 §5）。
+
+    main 排除有 hygiene 標記的 build（010 §3）；all_builds 包含全部；兩者不同時 differs 為 True。
+    """
     groups = defaultdict(list)
-    for (impl, n, m, efc, _), row in builds.items():
-        groups[(impl, n, m, efc)].append(row)
-    return [
-        {"implementation": impl, "n": n, "m": m, "ef_construction": efc,
-         **{metric: _summary([r[metric] for r in members]) for metric in BUILD_METRICS}}
-        for (impl, n, m, efc), members in sorted(groups.items())
-    ]
+    for row in builds:
+        groups[(row["implementation"], row["n"], row["m"], row["ef_construction"])].append(row)
+    entries = []
+    for (impl, n, m, efc), members in sorted(groups.items()):
+        clean = [r for r in members if not r["flags"]]
+        main = {metric: _summary([r[metric] for r in clean]) for metric in BUILD_METRICS}
+        everything = {metric: _summary([r[metric] for r in members]) for metric in BUILD_METRICS}
+        entries.append({"implementation": impl, "n": n, "m": m, "ef_construction": efc, **main,
+                        "builds": len(clean), "all_builds": everything, "flagged_builds": len(members) - len(clean),
+                        "differs": main != everything})
+    return entries
 
 
 def _check_compatible(records: list[dict]) -> None:
@@ -236,7 +255,7 @@ def build_report(records: list[dict]) -> dict:
         "ratios": ratios(front),
         "seed_variance": all_aggregates,
         "order_variance": order_variance(rows),
-        "scaling": scaling(rows),
+        "scaling": scaling(build_rows(records)),
         "recall_vs_ef": recall_vs_ef(all_aggregates),
         "incomplete_points": [
             {k: r[k] for k in ("implementation", "n", "m", "ef_construction", "seed", "shuffle", "ef_search", "status",
@@ -325,14 +344,16 @@ def markdown(report: dict) -> str:
                          f"{o['seed']} | {o['shuffles']} | {r['median']:.4f} [{r['min']:.4f}, {r['max']:.4f}] | "
                          f"{q['median']:.0f} | {o['note']} |")
 
-    lines += ["", "## scaling（每個 build 計一次；median [min, max]）", "",
-              "| 實作 | n | M | efC | build (s) | peak RSS (MiB) | index memory (MiB) |", "| --- | --- | --- | --- | --- | --- | --- |"]
+    lines += ["", "## scaling（每個 build 計一次；排除被標記的 build；median [min, max]）", "",
+              "| 實作 | n | M | efC | build (s) | peak RSS (MiB) | index memory (MiB) | builds | 被標記的 build |",
+              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for s in report["scaling"]:
         def span(summary, scale, digits):
             return "—" if summary is None else (f"{summary['median'] / scale:.{digits}f} "
                                                f"[{summary['min'] / scale:.{digits}f}, {summary['max'] / scale:.{digits}f}]")
         lines.append(f"| {s['implementation']} | {s['n']} | {s['m']} | {s['ef_construction']} | {span(s['build_ns'], 1e9, 3)} | "
-                     f"{span(s['peak_rss_bytes'], 2**20, 1)} | {span(s['index_memory_bytes'], 2**20, 1)} |")
+                     f"{span(s['peak_rss_bytes'], 2**20, 1)} | {span(s['index_memory_bytes'], 2**20, 1)} | "
+                     f"{s['builds']} | {s['flagged_builds']} |")
 
     for title, key in (("結果不足 k 的點", "incomplete_points"), ("被標記的點（不進入主要讀值）", "flagged_points"),
                        ("失敗的子 process", "failed_children")):

@@ -29,10 +29,10 @@ def duplicate_row_fraction(x: np.ndarray) -> float:
 
 def rank1_tie_queries(data: np.ndarray, queries: np.ndarray, gt: np.ndarray, eps: float = TIE_EPS) -> int:
     """exact 第 1 名與第 2 名的 f64 距離差 ≤ eps 的 query 數（rank 1 有 tie，008 §4）。"""
-    data64 = np.asarray(data, dtype=np.float64)
+    data = np.asarray(data)
     queries64 = np.asarray(queries, dtype=np.float64)
-    first = 1.0 - np.einsum("ij,ij->i", data64[gt[:, 0]], queries64)
-    second = 1.0 - np.einsum("ij,ij->i", data64[gt[:, 1]], queries64)
+    first = 1.0 - np.einsum("ij,ij->i", np.asarray(data[gt[:, 0]], dtype=np.float64), queries64)
+    second = 1.0 - np.einsum("ij,ij->i", np.asarray(data[gt[:, 1]], dtype=np.float64), queries64)
     return int((second - first <= eps).sum())
 
 
