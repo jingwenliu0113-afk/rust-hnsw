@@ -1,0 +1,16 @@
+# 正式 run（decision 013）：GloVe n = 100,000、(M, efC) = (48, 200)，seeds 1、2（原始順序）。
+# (48, 200) 是 M 掃描的高端，也是 GloVe 0.99 的 seed variance 格點（seeds 1–5，不做 shuffle；013 §3）。
+# seeds 3–5 在 glove-formal-4、glove-formal-5；三份的 ef 清單必須完全相同（013 §2）。
+# child_timeout_s 依 013 §6。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [32, 48, 64, 96, 128, 192, 256, 384, 512]
+child_timeout_s = 7200
+
+[[sweep]]
+n = [100000]
+m = [48]
+ef_construction = [200]
+seeds = [1, 2]
+shuffles = []

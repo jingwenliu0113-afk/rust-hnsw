@@ -1,0 +1,23 @@
+# 正式 run（decision 013）：GloVe n = 100,000。
+# 第一個 sweep：(48, 200) 的 seed 5，seed variance 格點的最後一個 seed（ef 清單與 glove-formal-3、glove-formal-4 完全相同）。
+# 第二個 sweep：efC 掃描的 (16, 100)，seed 1；共用同一份 ef 清單（013 §2）。
+# child_timeout_s 依 013 §6。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [32, 48, 64, 96, 128, 192, 256, 384, 512]
+child_timeout_s = 7200
+
+[[sweep]]
+n = [100000]
+m = [48]
+ef_construction = [200]
+seeds = [5]
+shuffles = []
+
+[[sweep]]
+n = [100000]
+m = [16]
+ef_construction = [100]
+seeds = [1]
+shuffles = []

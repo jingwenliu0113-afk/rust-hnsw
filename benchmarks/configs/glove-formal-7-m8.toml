@@ -1,0 +1,15 @@
+# 正式 run（decision 013）：GloVe n = 100,000 的 M 掃描低端 (8, 200)，seed 1。ef 上界 1024 是成本上限（013 §2）。
+# 只有一個 build：三個實作的執行順序固定為清單順序（008 §5），照實註明。
+# child_timeout_s 依 013 §6。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [128, 192, 256, 384, 512, 768, 1024]
+child_timeout_s = 3000
+
+[[sweep]]
+n = [100000]
+m = [8]
+ef_construction = [200]
+seeds = [1]
+shuffles = []

@@ -18,6 +18,7 @@
   - 文字 pilot n = 10k（`results/runs/20261008T143953Z-smoke`）：三者都單調上升，ef = 64 約 0.98、ef = 256 約 0.999。
   - 兩者都沒有結果不足 k、沒有重跑或 batch / single 不一致，frozen ground truth 驗證後使用。圖在各 run 的 `report/`（results/ 不進 Git）。
 - decision 012：正式文字 workload 為 `simplewiki-embeddinggemma2-100k`（base 100,000、query 2,000、登記 n = 10k / 30k / 100k）。
+- decision 013：正式格點已採用（12 份 config、約 19.2 h），GloVe 的 8 份已 commit。
 - 2026-10-08 23:37 前後 session 結束，背景工作收到 SIGTERM：
   - GloVe 成本探測記為 aborted（`results/runs/20261008T144333Z-smoke`）：n = 100k、M = 48、efC = 400 三個實作已完整量完；
     n = 1,183,514 只完成 hnswlib 的 build。後半段以 `glove-cost-probe-full.toml` 重跑。
@@ -60,7 +61,9 @@
 - `04a68d8 feat(benchmarks): add the idle-load baseline measurement required before formal runs`
 - `f37ce6c docs: update README with real-data correctness and the new tools`
 - `cc900e5 feat(benchmarks): report index footprint next to index memory`
-- `feat(benchmarks): record power mode, adapter wattage and battery state`（本次）
+- `2c8543f feat(benchmarks): record power mode, adapter wattage and battery state`
+- `8958f33 docs: narrow the deferral to formal, performance-sensitive Mac experiments`
+- `docs: pre-register the formal grid (decision 013) and add the GloVe formal configs`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -128,10 +131,16 @@
      batch size 1 下 base 約 1,124 秒、query 約 108 秒（機器 load 約 9–12，約 9 筆/秒），token 數最多 386、平均約 98，去重移除 6 段。
    - （已完成）兩個資料集上的 correctness run 與第一張 recall vs efSearch 圖（見「目前位置」）。
    - （已完成）decision 012：正式文字 workload 的規模。進行中：產生 `simplewiki-embeddinggemma2-100k`，完成後與它的 manifest 一起 commit。
-5. **正式格點的 decision 與 formal config**（依 010 列出 variance 格點與 ef 格點，先 commit 再跑）：
-   - 依據 GloVe 成本探測（n = 100k 的 M = 48、efC = 400，ef 到 1024；n = 1,183,514 的 build）與 correctness run 的 recall 涵蓋範圍。
-     只使用 recall 涵蓋範圍與成本，不使用 smoke 的實作間效能差異；三個實作用同一組格點。
-   - 正式 run 需要 heavy lock 與閒置的機器（第 3 項）。
+5. **正式格點（decision 013，已採用）**：
+   - 以三個獨立設計（成本最小、統計穩健、涵蓋最廣）加三位評審（合規、成本、完整性）定稿；三位評審都以「成本最小」為基礎，
+     再移植 M8、GloVe (48, 200) 的 5-seed variance、1,183,514 加 768 / 1218 / 1536、文字 M16 上界 512 等。
+   - 12 份 config、38 個 build、負載下上限約 19.2 h（GloVe 11.3 h、文字 7.9 h），每份 0.3–2.6 h。
+   - GloVe 的 8 份已 commit；文字的 4 份逐字登記在 013 附錄，與 `simplewiki-embeddinggemma2-100k` 的 manifest 同一個 commit 加入。
+   - **第一次 formal run 之前還必須完成**：
+     - （可以自己做）`report.py` 的四項檢查（013 §5）：拒絕跨 run 重複的 build、拒絕 aborted / invalid / error 的 run、
+       合併前的版本一致檢查、輔助的 (16, 200)-only scaling 讀值。
+     - （可以自己做）文字 4 份 config 的 commit（等 manifest）。
+     - （Deferred / Blocked）閒置 load 量測、B1、B2、使用者解除今晚的限制。
 6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
    - 工具已補齊（009 補記）：`profile.py --dataset <名稱> --n <n>` 與取樣前寫出的 JSON（git、BUILD_INFO、lock 狀態、Recall@10）。
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
@@ -176,6 +185,15 @@
   powermode = 2（高效能）、變壓器瓦數 ≥ 某個值（由你指定可用的變壓器）、電池不在充電中（或電量 ≥ 某個值）；不符就拒絕 / 標記 `power`。
 - 目前先只**記錄**（不改任何規則）：metadata 另外記下 `pmset -g ac`（變壓器瓦數）與解析後的 powermode。
 - 這一項與 Deferred 一起處理：解除限制時，請一併決定正式 run 要用的電力條件。
+
+### B3. 系統的 Xcode 在 2026-10-09 01:05 被更新後，`/usr/bin/git` 與 `cc` 無法執行（需要你處理系統設定；本專案有繞道，不擋工作）
+
+- `/Applications/Xcode.app` 在 01:05–01:06 被更換（不是本專案做的）。新的 `libxcrun.dylib` 是 arm64、系統的 `xcrun` 需要 arm64e，
+  所以經過 xcrun 的 `/usr/bin/git`、`/usr/bin/cc`（cargo 連結也會用到）都報 `unable to load libxcrun`。
+- 繞道（不改系統設定）：本專案的指令一律加 `export DEVELOPER_DIR=/Library/Developer/CommandLineTools`，改用已安裝的 Command Line Tools
+  （git 2.54.0、Apple clang 21.0.0）。pytest 423 個在此設定下全部通過。
+- 修正系統需要 sudo（例如 `sudo xcode-select -s /Library/Developer/CommandLineTools`，或修復 / 重新安裝 Xcode），由你決定，我沒有動。
+- 對正式 run 的影響：formal 前的 `./scripts/test.sh` 與 runner 內的 git 檢查也要在同樣的環境變數下執行；連結器版本不影響 rustc 的程式碼產生。
 
 ## 需要留意
 

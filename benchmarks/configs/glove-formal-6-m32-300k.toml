@@ -1,0 +1,23 @@
+# 正式 run（decision 013）：GloVe。
+# 第一個 sweep：n = 100,000 的 M 掃描中點 (32, 200)，seed 1。
+# 第二個 sweep：scaling 的 n = 300,000，固定 (16, 200)，seed 1。兩者共用一份 ef 清單（013 §2）。
+# child_timeout_s 依 013 §6。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [48, 64, 96, 128, 192, 256, 384, 512, 768]
+child_timeout_s = 6600
+
+[[sweep]]
+n = [100000]
+m = [32]
+ef_construction = [200]
+seeds = [1]
+shuffles = []
+
+[[sweep]]
+n = [300000]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = []

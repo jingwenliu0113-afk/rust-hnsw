@@ -1,0 +1,16 @@
+# 正式 run（decision 013）：GloVe 完整大小 n = 1,183,514 的 scaling，固定 (16, 200)，seed 1。
+# ef 清單含細化點 1218（smoke 在 ef 1024 的 Recall@10 只比 0.95 高 0.002–0.006），上界 1536（013 §2）。
+# 只有一個 build：三個實作的執行順序固定為清單順序（008 §5），照實註明。
+# child_timeout_s 依 013 §6。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [192, 256, 384, 512, 768, 1024, 1218, 1536]
+child_timeout_s = 17400
+
+[[sweep]]
+n = [1183514]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = []

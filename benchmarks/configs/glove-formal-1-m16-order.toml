@@ -1,0 +1,16 @@
+# 正式 run（decision 013）：GloVe n = 100,000、(M, efC) = (16, 200) 的完整 variance 格點（010 §4），第一部分。
+# seed 1 原始順序加 shuffles 101–105（搭配 seed 1）：order variance 全部在同一個 run 內量測。
+# seeds 2–5 在 glove-formal-2-m16-seeds-efc400.toml；同一格的 ef 清單必須完全相同（013 §2，含細化點 152、304）。
+# child_timeout_s 依 013 §6。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [64, 96, 128, 152, 192, 256, 304, 384]
+child_timeout_s = 2400
+
+[[sweep]]
+n = [100000]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = [101, 102, 103, 104, 105]

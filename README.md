@@ -21,7 +21,7 @@
   | 文字 pilot（768 維） | 10,000 | 16 / 200 | 約 0.79 → 0.98 → 0.999 |
 
   完整 GloVe 上，ann-benchmarks 自帶的 neighbors 與本專案以 exact search 產生的 ground truth 完全一致。
-- 尚未有正式 benchmark 結果：正式格點（decision 013）設計中；formal run 需要 Mac heavy lock 與閒置的機器（見 `NEXT.md`）。
+- 尚未有正式 benchmark 結果：正式格點已事先登記（decision 013，12 份 config）；formal run 需要 Mac heavy lock 與閒置的機器（見 `NEXT.md`）。
 
 ## 目錄
 
@@ -127,3 +127,4 @@ uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
 - [010 比較規則與 variance 彙整（事先登記）](docs/decisions/010-comparison-rules.md)
 - [011 資料集：glove-100-angular 與 EmbeddingGemma 2 文字 workload](docs/decisions/011-datasets.md)
 - [012 正式文字 workload 的規模](docs/decisions/012-text-workload-scale.md)
+- [013 正式 run 的格點（formal config）](docs/decisions/013-formal-grid.md)
