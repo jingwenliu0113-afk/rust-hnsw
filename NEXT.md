@@ -59,7 +59,8 @@
 - `ddf0fd1 docs: record the reusable-page bias in index memory as a blocked decision`
 - `04a68d8 feat(benchmarks): add the idle-load baseline measurement required before formal runs`
 - `f37ce6c docs: update README with real-data correctness and the new tools`
-- `feat(benchmarks): report index footprint next to index memory`（本次）
+- `cc900e5 feat(benchmarks): report index footprint next to index memory`
+- `feat(benchmarks): record power mode, adapter wattage and battery state`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -136,6 +137,17 @@
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
    - 待正式 run 的結果出來後，依相近的 Recall@10 為各實作選 ef，在 heavy lock 下取樣。
 
+## Deferred（使用者 2026-10-09 約 01:00 指示，等使用者明確解除）
+
+- 今晚 Mac 使用「自動」電力模式（pmset powermode 0）、只有 68W 供電（70W USB-C 變壓器，電池充電中）：
+  **暫停所有新的正式 Mac performance benchmark / heavy run**。開發、測試、資料準備、commit / push 照常。
+- 因此 deferred（不等待，改做其他 Core 工作）：
+  - 閒置 load 量測（`benchmarks.idle_load`，在 heavy lock 下）。
+  - 所有 formal run（GloVe 與文字的 formal config 會照常寫好並 commit，但不執行）。
+  - lock 下的 Gate profiling。
+  - 新的大型 smoke 成本探測（已有的探測資料足夠設計格點）。
+- 進行中、照常繼續：`simplewiki-embeddinggemma2-100k` 的 embedding（資料準備）。
+
 ## Blocked / 需要使用者決定
 
 ### B1. index memory 的量測定義（修改凍結的 008 §8，需要你決定；不擋正式 run）
@@ -156,6 +168,15 @@
   若正式 run 在你決定之前完成：報告的 memory 讀值兩種都列（rss 與 footprint），選擇的依據只能是上面這份與正式結果無關的證據。
   報告已加上 footprint 的輔助欄位（frontier 與 scaling；主要讀值仍是 rss，未改 008 §8）。
 - **另外的觀察（不是量測問題）**：同一份暫時副本讓 Rust build 期間的 peak RSS 多出一份資料（真實的實作特性，照實報告）；可能是 Advanced A 的假設之一，Core 不改。
+
+### B2. 正式 run 的電力條件（新增前置條件屬於修改 008，需要你決定）
+
+- 008 的 formal 前置檢查只確認「接的是 AC 電源」（並在執行中標記 `power`）。但電力模式與供電也會改變 CPU 效能：
+  2026-10-08 23:37 的 run 紀錄是「高效能」（powermode 2）、電池 92%；2026-10-09 01:00 為「自動」（powermode 0）、68W 變壓器、電池 56% 充電中。
+- **建議**：在第一次 formal run 之前登記固定的電力條件，formal 前置檢查與每個子 process 前都確認，例如：
+  powermode = 2（高效能）、變壓器瓦數 ≥ 某個值（由你指定可用的變壓器）、電池不在充電中（或電量 ≥ 某個值）；不符就拒絕 / 標記 `power`。
+- 目前先只**記錄**（不改任何規則）：metadata 另外記下 `pmset -g ac`（變壓器瓦數）與解析後的 powermode。
+- 這一項與 Deferred 一起處理：解除限制時，請一併決定正式 run 要用的電力條件。
 
 ## 需要留意
 

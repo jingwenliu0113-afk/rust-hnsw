@@ -276,9 +276,34 @@ def parse_power_source(batt_text: str) -> str:
     return match.group(1) if match else batt_text.strip()
 
 
+_POWERMODE = re.compile(r"^\s*powermode\s+(\d+)\s*$", re.MULTILINE)
+_WATTAGE = re.compile(r"Wattage\s*=\s*(\d+)W")
+_BATTERY = re.compile(r"(\d+)%;\s*([^;]+);")
+
+
+def parse_powermode(pmset_text: str) -> int | None:
+    """`pmset -g` 的 powermode（0 自動、1 低耗電、2 高效能）；沒有這一行時為 None。只記錄，不檢查（NEXT.md B2）。"""
+    match = _POWERMODE.search(pmset_text)
+    return int(match.group(1)) if match else None
+
+
+def parse_adapter_watts(ac_text: str) -> int | None:
+    """`pmset -g ac` 的變壓器瓦數；沒接變壓器時為 None。"""
+    match = _WATTAGE.search(ac_text)
+    return int(match.group(1)) if match else None
+
+
+def parse_battery(batt_text: str) -> dict | None:
+    """`pmset -g batt` 的電量與狀態（例如 charging、charged、discharging）；沒有電池時為 None。"""
+    match = _BATTERY.search(batt_text)
+    return {"percent": int(match.group(1)), "state": match.group(2).strip()} if match else None
+
+
 def power_state() -> dict:
-    batt = _run("pmset", "-g", "batt")
-    return {"pmset": _run("pmset", "-g"), "pmset_batt": batt, "power_source": parse_power_source(batt)}
+    """電力狀態。powermode、變壓器瓦數與電池狀態只記錄、不檢查：正式 run 的電力條件待使用者決定（NEXT.md B2）。"""
+    pmset, batt, ac = _run("pmset", "-g"), _run("pmset", "-g", "batt"), _run("pmset", "-g", "ac")
+    return {"pmset": pmset, "pmset_batt": batt, "pmset_ac": ac, "power_source": parse_power_source(batt),
+            "powermode": parse_powermode(pmset), "adapter_watts": parse_adapter_watts(ac), "battery": parse_battery(batt)}
 
 
 def check_ac_power(power_source: str) -> None:
@@ -311,7 +336,7 @@ def snapshot() -> dict:
         "therm_warnings": therm_warnings(therm),
         "swap_used_bytes": parse_swap_used(_run("sysctl", "vm.swapusage")),
         "compressor_pages": parse_compressor_pages(_run("vm_stat")),
-        "power_source": parse_power_source(_run("pmset", "-g", "batt")),
+        **{key: value for key, value in power_state().items() if key not in ("pmset", "pmset_batt", "pmset_ac")},
     }
 
 

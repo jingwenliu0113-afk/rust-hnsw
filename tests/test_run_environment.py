@@ -372,6 +372,18 @@ def test_power_source_is_parsed_and_formal_needs_ac_power():
         environment.check_ac_power("Battery Power")
 
 
+def test_power_mode_adapter_and_battery_are_parsed():
+    pmset = "System-wide power settings:\nCurrently in use:\n standby              1\n powermode            2\n womp 1\n"
+    assert environment.parse_powermode(pmset) == 2
+    assert environment.parse_powermode("Currently in use:\n sleep 0\n") is None
+    ac = " Wattage = 68W\n Current = 3390mA\n Adapter Name = 70W USB-C Power Adapter \n"
+    assert environment.parse_adapter_watts(ac) == 68
+    assert environment.parse_adapter_watts("No adapter attached.\n") is None
+    batt = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t56%; charging; 2:47 remaining present: true\n"
+    assert environment.parse_battery(batt) == {"percent": 56, "state": "charging"}
+    assert environment.parse_battery("Now drawing from 'AC Power'\n") is None
+
+
 def test_phys_footprint_tracks_new_allocations():
     before = environment.phys_footprint_bytes()
     block = np.ones(32 * 2**20 // 8)
@@ -383,7 +395,7 @@ def test_phys_footprint_tracks_new_allocations():
 def test_snapshot_records_the_hygiene_fields():
     snapshot = environment.snapshot()
     assert set(snapshot) >= {"time", "loadavg", "therm", "therm_warnings", "swap_used_bytes", "compressor_pages",
-                             "power_source"}
+                             "power_source", "powermode", "adapter_watts", "battery"}
     assert len(snapshot["loadavg"]) == 3
 
 
@@ -429,5 +441,6 @@ def test_machine_metadata_has_core_counts_and_power_state():
     meta = environment.machine_metadata()
     assert meta["performance_cores"] + meta["efficiency_cores"] >= 1
     assert "System-wide power settings" in meta["pmset"]
+    assert {"pmset_ac", "powermode", "adapter_watts", "battery"} <= set(meta)
     assert meta["cpu_brand"]
     assert meta["memory_bytes"] > 0
