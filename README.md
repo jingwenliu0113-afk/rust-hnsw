@@ -18,6 +18,7 @@ python/             PyO3 binding，Python module 名稱 `rust_hnsw`
 benchmarks/         統一 batch interface、adapters、Recall 指標
 tests/              Python 測試（binding、adapters、第三方原生語意、interface、metrics）
 scripts/test.sh     一鍵跑全部 correctness 檢查
+scripts/profile.sh  以 macOS `sample` 對 build / search 取樣（decision 009）
 docs/decisions/     decision logs
 tools/with-mac-lock 正式 benchmark 用的 Mac heavy lock
 ```
@@ -51,3 +52,4 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 - [005 HNSW index 檔案格式（save / load）](docs/decisions/005-index-file-format.md)
 - [006 HNSW 的 Python binding 與 efSearch 介面](docs/decisions/006-hnsw-python-binding.md)
 - [007 hnswlib / FAISS adapters 與實測語意](docs/decisions/007-third-party-adapters.md)
+- [009 profiling 方法（Gate 證據的產生方式）](docs/decisions/009-profiling-method.md)

@@ -6,3 +6,5 @@ __pycache__/
 .DS_Store
 # 資料集不進版控
 /datasets/
+# benchmark 與 profiling 的原始輸出不進版控（decision 009）
+/results/

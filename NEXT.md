@@ -53,9 +53,9 @@
    - QPS 重跑 5 次、latency 重跑 3 次；Recall@1 取 k = 10 的第一欄（已實測三者等價，要以測試釘住）。
    - 每個 adapter 分別量空呼叫成本；formal 模式必須在 `./tools/with-mac-lock` 下、git clean、低負載。
    - 先只用 synthetic 資料跑 smoke 模式驗證 runner 本身。
-2. **profiling 準備**（Gate 需要「profiler 已顯示時間主要花在哪」）：
-   - 本機有 `xctrace`（Time Profiler）與 `sample`，不需安裝。
-   - 準備對 Rust search / build 做 profiling 的流程。
+2. **profiling 準備**：已完成（decision 009）。
+   - `scripts/profile.sh` 以 macOS `sample` 透過 adapter 取樣，`benchmarks/profile_report.py` 輸出 self-time 排行。
+   - synthetic 試跑只驗證工具，不作結論；Gate 證據要用真實資料、在 lock 下、相近 recall 比較。
 3. **第一個真實資料集**（需要使用者決定，見 Blocked）。
 4. **第一張 recall vs efSearch 圖**（依 007：跨實作只在相近的 Recall@K 下比較）。
 
