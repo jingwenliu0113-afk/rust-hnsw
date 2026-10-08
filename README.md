@@ -16,7 +16,7 @@
 ```text
 crates/hnsw/        Rust 實作（distance、exact search、HNSW、save / load）
 python/             PyO3 binding，Python module 名稱 `rust_hnsw`
-benchmarks/         統一 batch interface、adapters、Recall 指標、benchmark runner（run.py）
+benchmarks/         統一 batch interface、adapters、Recall 指標、benchmark runner（run.py）、報告（report.py）
 benchmarks/configs/ runner 的 TOML config（目前只有 smoke）
 tests/              Python 測試（binding、adapters、第三方原生語意、interface、metrics）
 scripts/test.sh     一鍵跑全部 correctness 檢查
@@ -56,6 +56,12 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 ```
 
 輸出在 `results/runs/<UTC 時間>-<mode>/`（不進版控）。formal 需要已登記的真實資料集，目前還沒有。
+
+報告（依 decision 010 的比較規則：frontier 讀值、variance、scaling、recall vs efSearch 圖）：
+
+```bash
+.venv/bin/python -m benchmarks.report results/runs/<run 目錄> [<run 目錄> ...]
+```
 
 ## 主要決策
 

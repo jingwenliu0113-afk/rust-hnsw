@@ -6,7 +6,9 @@
 
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
   hnswlib / FAISS adapters（007）、benchmark runner（008，smoke 已驗證）、比較規則的事先登記（010）。
-- 下一步：runner 的獨立審查與修正 → 分析 / 報告腳本（依 010）→ 第一個真實資料集（需要使用者決定）。
+  分析 / 報告腳本（`benchmarks/report.py`，依 010）。
+- 進行中：runner 實作的獨立審查（背景 workflow），之後修正。
+- 下一個需要使用者決定的事：第一個真實資料集（見 Blocked）。
 
 尚未進 Advanced（Gate 條件都還沒有資料可判斷），沒有做任何 Optional。
 
@@ -25,7 +27,8 @@
 - `f134ff3 feat(python): add HNSW binding and efSearch interface`
 - `7fdf8d0 feat(benchmarks): add hnswlib and FAISS adapters with measured semantics`
 - `5625cc9 feat(benchmarks): add sample-based profiling workflow`
-- `feat(benchmarks): add benchmark runner with pre-registered protocol`（本次）
+- `2b783bd feat(benchmarks): add benchmark runner with pre-registered protocol`
+- `feat(benchmarks): add report generation for the pre-registered comparison rules`（本次）
 
 ## 最近完成：benchmark runner（decision 008、010）
 
@@ -45,10 +48,20 @@
   另以 `test_third_party_semantics.py` 釘住 FAISS 在 efC < M 時語意不同、tie 時 k = 1 ≠ 第一欄。
 - **驗證**：`./scripts/test.sh` 全部通過，Rust 100 個、pytest 283 個。
 
+## 最近完成：報告腳本（decision 010）
+
+- `benchmarks/report.py`：讀一或多個 run.json（同 mode、同資料集、同協定版本才可合併），輸出 report.json、report.md 與圖：
+  - frontier 讀值（每個目標取 QPS 最高、P50 / P95 / index memory 最低，附 (M, efC, ef)；不內插、不外推，未達到就記「未達到」）；
+  - 被標記點排除前後的讀值不同時兩者都列；hnswlib 整批失敗的點不在 frontier，Rust / FAISS 補齊的點標記「不足 k」；
+  - QPS 比值（只在兩者都達到目標時計算）、seed / order variance（median 與 min–max，保留原始值，FAISS 另註）、scaling、recall vs efSearch 檢查；
+  - 圖：每個 (n, M, efC) 的 recall vs efSearch（跨 seed min–max）、每個 n 的 recall–QPS 散佈。
+- 新依賴：`matplotlib==3.11.2`（pin 在 requirements-dev.txt）。
+- 測試：`tests/test_report.py` 以手寫的 run 紀錄逐條驗證 010 的規則，並對真正的 runner 輸出跑一次。pytest 共 298 個。
+
 ## 下一步（依序）
 
-1. **runner 的獨立審查**（ultracode）：以 mutation 檢查測試鑑別力，並逐條對照 008 / 010；修正後另一個 commit。
-2. **分析 / 報告腳本**（依 010）：從 run.json 產生 frontier 讀值、variance 彙整、recall vs efSearch 圖；先用 smoke 輸出驗證。
+1. **runner 的獨立審查**（背景 workflow 執行中）：以 mutation 檢查測試鑑別力，並逐條對照 008 / 010；修正後另一個 commit。
+2. （已完成）分析 / 報告腳本。
 3. **閒置 load 的量測**（008 §2）：在沒有 lock holder、沒有其他重工作時量 10 分鐘，確認 4.0 的門檻；不符就另寫 decision log。
 4. **第一個真實資料集**（需要使用者決定，見 Blocked）：決定後寫資料集 decision（來源、授權、SHA-256、子集規則），登記到 `benchmarks/datasets.py`。
 5. **第一張 recall vs efSearch 圖與正式 run**（formal config 先 commit，依 010 列出 variance 格點）。
