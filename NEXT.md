@@ -56,7 +56,8 @@
 - `1bf8545 docs: decide the formal text workload scale and add the GloVe cost probe`
 - `793edc9 feat(benchmarks): profile registered datasets and record the profiling context`
 - `693ba51 chore(benchmarks): rerun the full-size half of the GloVe cost probe`
-- `docs: record the reusable-page bias in index memory as a blocked decision`（本次）
+- `ddf0fd1 docs: record the reusable-page bias in index memory as a blocked decision`
+- `feat(benchmarks): add the idle-load baseline measurement required before formal runs`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
@@ -110,6 +111,10 @@
 2. （已完成）分析 / 報告腳本。
 3. **閒置 load 的量測**（008 §2）：在沒有 lock holder、沒有其他重工作時量 10 分鐘，確認 4.0 的門檻；不符就另寫 decision log。
    - 2026-10-08 19:00 前後嘗試：incident-investigator 持有 heavy lock（soak），text-to-sql、agent-gym 各有 100% CPU 的 process，1 分鐘 load 約 7.8–8.2，無法量閒置基準。暫時 blocked，之後再試（只影響 formal run，不影響其他 Core 工作）。
+   - 工具已完成（2026-10-09）：`./tools/with-mac-lock .venv/bin/python -m benchmarks.idle_load`。每 15 秒取樣、共 10 分鐘，
+     輸出 P50 / P95 / 最大值與「P95 + 1.0」對門檻 4.0 的判定；其他 process 平均 ≥ 50% CPU 時判為 `not_idle`（008 §2 的「沒有其他重工作」），
+     結果寫到 `results/idle_load/`。只記錄、不改門檻；`exceeds` 時依 008 §2 需要另寫 decision 修訂門檻（屬於修改門檻，記到 Blocked 等使用者）。
+   - 2026-10-09 00:50 檢查：本專案的 100k embedding、agent-gym 與另一個 python3 各占約 100–180% CPU，heavy lock 由 llm-serving-lab 持有 → 仍 blocked。
 4. **資料集（使用者已決定，decision 011）**：
    - 程式與測試已完成：GloVe 轉換、frozen ground truth（runner 以 SHA-256 加前 100 個 query 重算驗證後使用）、
      manifest 登記、文字 corpus 的前處理與切分（以文章為單位、加鹽 SHA-256 排序、完全相同的文字只留一份）、
