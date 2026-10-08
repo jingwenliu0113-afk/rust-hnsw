@@ -25,7 +25,7 @@ Core 不需要 RTX 5070 Ti。
 例如：
 
 ```bash
-./tools/with-mac-lock python benchmarks/run.py
+./tools/with-mac-lock .venv/bin/python -m benchmarks.run <formal config> --mode formal
 ```
 
 `with-mac-lock` 會：

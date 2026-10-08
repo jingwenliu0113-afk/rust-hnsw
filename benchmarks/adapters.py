@@ -106,6 +106,10 @@ class RustHnsw:
         _require_ef(self._ef_search)
         return self._index.search(queries, k, self._ef_search)
 
+    def save_native(self, path: str) -> None:
+        """decision 005 的格式；只用於 008 §8 的輔助欄位 serialized_bytes。"""
+        self._index.save(path)
+
 
 # hnswlib 0.8.0 在任一 query 結果不足 k 時，對整批丟出的 RuntimeError 訊息（decision 007）。
 _HNSWLIB_SHORT_RESULTS = "Cannot return the results in a contiguous 2D array"
@@ -157,6 +161,9 @@ class Hnswlib:
         # uint64 labels zero-copy 轉成 int64（id < 2^63）。
         return labels.view(np.int64), distances
 
+    def save_native(self, path: str) -> None:
+        self._index.save_index(path)
+
 
 class FaissHnsw:
     """FAISS IndexHNSWFlat + METRIC_INNER_PRODUCT（decision 007）：單執行緒，similarity 轉成 distance。"""
@@ -201,3 +208,8 @@ class FaissHnsw:
         if padding.any():
             sims[padding] = np.inf
         return ids, sims
+
+    def save_native(self, path: str) -> None:
+        import faiss
+
+        faiss.write_index(self._index, path)

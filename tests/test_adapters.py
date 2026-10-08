@@ -419,3 +419,51 @@ def test_tie_order_is_passed_through_unchanged():
         ids, dists = adapter.search(query, 5)
         assert ids[0].tolist() == order, cls.name
         assert np.all(dists == 0), cls.name
+
+
+# ---- Recall@1 的來源（decision 008 §7） ----
+
+
+def test_first_column_equals_k1_answer_without_ties(adapter_cls):
+    data = random_unit(41, 2000, 16)
+    queries = random_unit(42, 200, 16)
+    adapter = built(adapter_cls, data)
+    for ef in (10, 37):
+        adapter.set_ef_search(ef)
+        np.testing.assert_array_equal(adapter.search(queries, 10)[0][:, 0], adapter.search(queries, 1)[0][:, 0])
+
+
+def test_first_column_differs_from_k1_only_by_tie_order_on_duplicates(adapter_cls):
+    # 200 個方向各 15 份完全相同的副本：k = 1 與第一欄的 id 可以不同，但距離必須相同。
+    rng = np.random.default_rng(43)
+    directions = prepare_vectors(rng.standard_normal((200, 16)))
+    data = np.ascontiguousarray(directions[rng.permutation(np.arange(3000) % 200)])
+    queries = random_unit(44, 300, 16)
+    adapter = built(adapter_cls, data, m=16, ef_construction=100)
+    adapter.set_ef_search(16)
+    ids10, dists10 = adapter.search(queries, 10)
+    ids1, dists1 = adapter.search(queries, 1)
+    np.testing.assert_allclose(dists10[:, 0], dists1[:, 0], rtol=0, atol=1e-6)
+    differs = ids10[:, 0] != ids1[:, 0]
+    np.testing.assert_array_equal(data[ids10[differs, 0]], data[ids1[differs, 0]])
+
+
+# ---- 原生序列化大小（decision 008 §8：只作輔助欄位） ----
+
+
+def test_save_native_writes_the_library_format(adapter_cls, tmp_path):
+    data = random_unit(45, 300, 8)
+    adapter = built(adapter_cls, data)
+    path = tmp_path / "index.bin"
+    adapter.save_native(str(path))
+    assert path.stat().st_size > data.nbytes
+
+    if adapter_cls is RustHnsw:
+        count = len(rust_hnsw.HnswIndex.load(str(path)))
+    elif adapter_cls is Hnswlib:
+        loaded = hnswlib.Index(space="ip", dim=8)
+        loaded.load_index(str(path))
+        count = loaded.get_current_count()
+    else:
+        count = faiss.read_index(str(path)).ntotal
+    assert count == 300

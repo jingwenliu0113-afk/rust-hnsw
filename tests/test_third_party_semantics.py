@@ -291,3 +291,39 @@ def test_tie_order_differs_between_libraries():
     sims, ids = f.search(query, 5)
     assert ids[0].tolist() == [4, 3, 2, 1, 0]
     assert np.all(sims == 1)
+
+
+def test_k1_answer_differs_from_first_column_of_k10_on_ties():
+    """decision 008 §7：tie 時 k = 1 的答案不等於 k = 10 的第一欄，所以 Recall@1 另外跑 k = 1。"""
+    query = prepare_vectors([[1.0, 0.0]])
+    f = build_faiss(tie_data(), m=4, ef_construction=20)
+    f.hnsw.efSearch = 16
+    assert f.search(query, 10)[1][0, 0] == 4
+    assert f.search(query, 1)[1][0, 0] != 4
+
+    h = build_hnswlib(tie_data(), m=4, ef_construction=20)
+    h.set_ef(16)
+    assert h.knn_query(query, k=10, num_threads=1)[0][0, 0] == 0
+    assert h.knn_query(query, k=1, num_threads=1)[0][0, 0] != 0
+
+
+# ---- efConstruction < M（decision 008 §3：runner 要求 efC ≥ M） ----
+
+
+def test_ef_construction_below_m_is_max_for_hnswlib_but_not_for_faiss():
+    data = random_unit(3, 3000, 16)
+    queries = random_unit(4, 200, 16)
+
+    def hnswlib_ids(ef_construction):
+        index = build_hnswlib(data, m=16, ef_construction=ef_construction)
+        index.set_ef(20)
+        return index.knn_query(queries, k=10, num_threads=1)[0]
+
+    def faiss_ids(ef_construction):
+        index = build_faiss(data, m=16, ef_construction=ef_construction, seed=1)
+        index.hnsw.efSearch = 20
+        return index.search(queries, 10)[1]
+
+    # hnswlib 實際使用 max(efC, M)（與 Rust 相同，decision 004）；FAISS 沒有這條規則。
+    np.testing.assert_array_equal(hnswlib_ids(4), hnswlib_ids(16))
+    assert not np.array_equal(faiss_ids(4), faiss_ids(16))

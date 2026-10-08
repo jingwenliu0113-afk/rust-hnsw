@@ -316,3 +316,17 @@ def test_set_ef_search_rejects_non_integers_immediately():
 
 def test_exact_adapter_is_not_an_hnsw_index():
     assert not isinstance(RustExact(), HnswAnnIndex)
+
+
+# ---- 編譯資訊（decision 008 §10：由 build.rs 在編譯時記錄，不讀 runtime 的 shell 環境） ----
+
+
+def test_build_info_records_the_compile_settings():
+    info = rust_hnsw.BUILD_INFO
+    assert set(info) == {"profile", "opt_level", "debug", "debug_assertions", "rustflags", "rustc"}
+    assert all(isinstance(info[key], str) for key in ("profile", "opt_level", "debug", "rustflags", "rustc"))
+    assert isinstance(info["debug_assertions"], bool)
+    assert info["profile"] in {"debug", "release"}
+    assert info["rustc"].startswith("rustc ")
+    # CARGO_ENCODED_RUSTFLAGS 以 0x1f 分隔，記錄時換成空白。
+    assert "\x1f" not in info["rustflags"]

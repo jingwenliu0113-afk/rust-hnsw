@@ -99,6 +99,7 @@ hnswlib 的數字以逐 query 探測「可回傳的最大 k」取得，不是 ad
   - 實作：只有 hnswlib 的這一條訊息會轉成專案的 `IncompleteResultsError`（`RuntimeError` 子類），讓 runner 不必比對 library 的錯誤字串；其他錯誤原樣拋出。
   - 測試以呼叫記錄器斷言：每次 search 只有一次原生呼叫，失敗後也沒有逐筆重試。
   - runner 遇到 `IncompleteResultsError`，把該（實作、資料集、參數、k）點記為「結果不足 k」，不產生 recall / latency（008）。
+    008 定稿後補記：Recall@1 另以一次 k = 1 的 search 取得（008 §7），不受 k = 10 整批失敗影響。
   - 這個不對稱必須在報告中呈現，不得隱藏。
 
 ### 4. ef 與 k

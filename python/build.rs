@@ -1,0 +1,31 @@
+//! 在編譯時記錄被量測的 binary 的編譯設定（decision 008 §10），以 `rust_hnsw.BUILD_INFO` 公開。
+//! runtime 讀到的 shell 環境不代表 `.so` 當初的編譯設定，所以只能在這裡記錄。
+
+use std::env;
+use std::process::Command;
+
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=RUSTFLAGS");
+    println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
+
+    for key in ["PROFILE", "OPT_LEVEL", "DEBUG"] {
+        let value = env::var(key).unwrap_or_default();
+        println!("cargo:rustc-env=RUST_HNSW_BUILD_{key}={value}");
+    }
+    // CARGO_ENCODED_RUSTFLAGS 以 0x1f 分隔各旗標。
+    let rustflags = env::var("CARGO_ENCODED_RUSTFLAGS")
+        .unwrap_or_default()
+        .replace('\x1f', " ");
+    println!("cargo:rustc-env=RUST_HNSW_BUILD_RUSTFLAGS={rustflags}");
+
+    let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
+    let version = Command::new(rustc)
+        .arg("-V")
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|s| s.trim().to_owned())
+        .unwrap_or_default();
+    println!("cargo:rustc-env=RUST_HNSW_BUILD_RUSTC={version}");
+}

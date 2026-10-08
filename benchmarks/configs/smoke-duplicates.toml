@@ -1,0 +1,13 @@
+# smoke：大量完全重複的向量，驗證補齊與結果不足 k 的紀錄（decision 004、007、008）。數字不得用於報告。
+schema_version = 1
+dataset = "smoke-duplicates"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [10]
+child_timeout_s = 300
+
+[[sweep]]
+n = [300]
+m = [4]
+ef_construction = [20]
+seeds = [1]
+shuffles = []

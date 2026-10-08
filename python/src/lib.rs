@@ -10,6 +10,7 @@ use numpy::ndarray::{Array2, ShapeError};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 /// `search` 的回傳：`(ids, distances)`。
 type SearchOutput<'py> = (Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<f32>>);
@@ -211,9 +212,22 @@ impl PyHnswIndex {
     }
 }
 
+/// 編譯設定（`build.rs` 在編譯時記錄，decision 008 §10）。formal benchmark 以此確認被量測的是 release build。
+fn build_info(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let info = PyDict::new(py);
+    info.set_item("profile", env!("RUST_HNSW_BUILD_PROFILE"))?;
+    info.set_item("opt_level", env!("RUST_HNSW_BUILD_OPT_LEVEL"))?;
+    info.set_item("debug", env!("RUST_HNSW_BUILD_DEBUG"))?;
+    info.set_item("debug_assertions", cfg!(debug_assertions))?;
+    info.set_item("rustflags", env!("RUST_HNSW_BUILD_RUSTFLAGS"))?;
+    info.set_item("rustc", env!("RUST_HNSW_BUILD_RUSTC"))?;
+    Ok(info)
+}
+
 #[pymodule]
 fn rust_hnsw(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyExactIndex>()?;
     m.add_class::<PyHnswIndex>()?;
+    m.add("BUILD_INFO", build_info(m.py())?)?;
     Ok(())
 }

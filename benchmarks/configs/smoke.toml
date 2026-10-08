@@ -1,0 +1,13 @@
+# smoke：只驗證 runner 本身（decision 008 §1），synthetic 資料，數字不得用於報告。
+schema_version = 1
+dataset = "smoke-gaussian"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [10, 32]
+child_timeout_s = 300
+
+[[sweep]]
+n = [300, 600]
+m = [8]
+ef_construction = [32]
+seeds = [1, 2]
+shuffles = [7]
