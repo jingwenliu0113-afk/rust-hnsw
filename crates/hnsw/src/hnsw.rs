@@ -8,10 +8,17 @@ use crate::distance::cosine_distance_unit;
 use crate::rng::SplitMix64;
 use crate::{BatchResult, HnswError, Neighbor, NodeId};
 
+mod persist;
+
+pub use persist::FORMAT_VERSION;
+
+/// `m` 的上限（decision 005）：保證 `2m` 放得進 `NodeId` 與任何平台的 usize。
+pub const MAX_M: usize = (NodeId::MAX / 2) as usize;
+
 /// 建 index 用的參數（decision 004）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HnswParams {
-    /// layer ≥ 1 每個點最多的鄰居數；layer 0 的上限為 `2 * m`。必須 ≥ 2。
+    /// layer ≥ 1 每個點最多的鄰居數；layer 0 的上限為 `2 * m`。必須在 `2..=MAX_M`。
     pub m: usize,
     /// 建圖時的候選數，必須 ≥ 1；實際使用 `max(ef_construction, m)`。
     pub ef_construction: usize,
@@ -57,10 +64,11 @@ impl HnswIndex {
         if dim == 0 {
             return Err(HnswError::InvalidDimension(dim));
         }
-        if params.m < 2 {
+        if !(2..=MAX_M).contains(&params.m) {
             return Err(HnswError::InvalidParameter {
                 name: "m",
                 min: 2,
+                max: MAX_M,
                 value: params.m,
             });
         }
@@ -68,6 +76,7 @@ impl HnswIndex {
             return Err(HnswError::InvalidParameter {
                 name: "ef_construction",
                 min: 1,
+                max: usize::MAX,
                 value: params.ef_construction,
             });
         }
@@ -487,6 +496,43 @@ mod tests {
             candidate_ids(&select_neighbors(&candidates, 3, distance)),
             [1, 2, 3]
         );
+    }
+
+    #[test]
+    fn rng_state_is_seed_plus_len_times_gamma() {
+        // decision 005「v1 語意綁定」：每次成功 insert 恰好抽一次亂數，失敗的 add 不抽。
+        // 這個測試紅燈代表亂數抽取方式改了，必須 bump format_version 並寫 decision log。
+        const GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
+        let seed = 0xDEAD_BEEF;
+        let mut index = HnswIndex::new(
+            3,
+            HnswParams {
+                m: 3,
+                ef_construction: 8,
+                seed,
+            },
+        )
+        .unwrap();
+        let expect = |index: &HnswIndex| {
+            assert_eq!(
+                index.rng.state(),
+                seed.wrapping_add((index.len() as u64).wrapping_mul(GAMMA))
+            );
+        };
+        expect(&index);
+        index.add(&[1.0, 0.0, 0.0]).unwrap();
+        expect(&index);
+        assert!(index.add(&[0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).is_err());
+        assert!(index.add(&[f32::NAN, 1.0, 0.0]).is_err());
+        assert!(index.add(&[1.0, 2.0]).is_err());
+        expect(&index);
+        index.add(&[]).unwrap();
+        let more: Vec<f32> = (0..60)
+            .map(|i| ((i * 37 % 11) as f32) - 5.0 + 0.5)
+            .collect();
+        index.add(&more).unwrap();
+        expect(&index);
+        assert_eq!(index.len(), 21);
     }
 
     #[test]

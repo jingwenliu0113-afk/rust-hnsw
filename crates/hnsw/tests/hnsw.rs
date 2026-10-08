@@ -4,7 +4,7 @@
 mod common;
 
 use common::{SplitMix64, assert_close, unit_circle};
-use hnsw::{ExactIndex, HnswError, HnswIndex, HnswParams, Neighbor, NodeId, PADDING_ID};
+use hnsw::{ExactIndex, HnswError, HnswIndex, HnswParams, MAX_M, Neighbor, NodeId, PADDING_ID};
 
 fn params(m: usize, ef_construction: usize, seed: u64) -> HnswParams {
     HnswParams {
@@ -59,6 +59,7 @@ fn new_validates_parameters() {
         HnswError::InvalidParameter {
             name: "m",
             min: 2,
+            max: MAX_M,
             value: 1
         }
     );
@@ -67,9 +68,28 @@ fn new_validates_parameters() {
         HnswError::InvalidParameter {
             name: "ef_construction",
             min: 1,
+            max: usize::MAX,
             value: 0
         }
     );
+}
+
+#[test]
+fn m_has_an_upper_bound_so_2m_cannot_overflow() {
+    // decision 005：m ≤ 2^31 − 1，保證 2m 放得進 NodeId。原本沒有上限，2m 會溢位。
+    assert_eq!(MAX_M, (1usize << 31) - 1);
+    assert!(HnswIndex::new(4, params(MAX_M, 10, 0)).is_ok());
+    for m in [MAX_M + 1, usize::MAX / 2 + 1, usize::MAX] {
+        assert_eq!(
+            HnswIndex::new(4, params(m, 10, 0)).unwrap_err(),
+            HnswError::InvalidParameter {
+                name: "m",
+                min: 2,
+                max: MAX_M,
+                value: m
+            }
+        );
+    }
 }
 
 #[test]

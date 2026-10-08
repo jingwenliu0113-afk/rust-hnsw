@@ -1,6 +1,9 @@
 //! 決定性亂數（SplitMix64），用於 HNSW level（decision 004）。
 //! 自帶實作，避免外部 crate 升級改變亂數序列。
 
+/// 每次 `next_u64` 的 state 增量。檔案格式的 rng_state 驗證依賴它（decision 005）。
+pub(crate) const GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
+
 #[derive(Debug, Clone)]
 pub(crate) struct SplitMix64 {
     state: u64,
@@ -11,8 +14,18 @@ impl SplitMix64 {
         Self { state: seed }
     }
 
+    /// 由 save 的檔案還原（decision 005）。
+    pub(crate) fn from_state(state: u64) -> Self {
+        Self { state }
+    }
+
+    /// 目前的 state，也就是下一次 `next_u64` 之前的值。
+    pub(crate) fn state(&self) -> u64 {
+        self.state
+    }
+
     pub(crate) fn next_u64(&mut self) -> u64 {
-        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        self.state = self.state.wrapping_add(GAMMA);
         let mut z = self.state;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);

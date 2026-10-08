@@ -1,6 +1,8 @@
 //! 整合測試共用的小工具。
 #![allow(dead_code)]
 
+pub mod spec_codec;
+
 /// 決定性亂數（SplitMix64），避免為了測試引入外部依賴。
 pub struct SplitMix64(u64);
 
