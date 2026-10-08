@@ -1,0 +1,16 @@
+# glove-cost-probe.toml 的後半段（smoke 模式；decision 008 §1）。第一次執行在 n = 1,183,514 的 hnswlib build 之後因 session 結束收到 SIGTERM，
+# run 記為 aborted（results/runs/20261008T144333Z-smoke，n = 100k 的 M = 48、efC = 400 三個實作已完整量完）。
+# 這裡只重跑完整大小的部分：估算 scaling 的 build 成本，並確認 n = 1,183,514 時 recall 在 ef ≤ 1024 內的範圍。
+# 計時不在 lock 下量測，不得用於任何效能結論。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [64, 128, 256, 512, 1024]
+child_timeout_s = 10800
+
+[[sweep]]
+n = [1183514]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = []

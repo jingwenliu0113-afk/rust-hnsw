@@ -18,7 +18,12 @@
   - 文字 pilot n = 10k（`results/runs/20261008T143953Z-smoke`）：三者都單調上升，ef = 64 約 0.98、ef = 256 約 0.999。
   - 兩者都沒有結果不足 k、沒有重跑或 batch / single 不一致，frozen ground truth 驗證後使用。圖在各 run 的 `report/`（results/ 不進 Git）。
 - decision 012：正式文字 workload 為 `simplewiki-embeddinggemma2-100k`（base 100,000、query 2,000、登記 n = 10k / 30k / 100k）。
-- 進行中：產生 100k 文字資料集（背景，約 3 小時）；GloVe 的成本探測（`glove-cost-probe.toml`，smoke），作為正式格點 decision 的依據。
+- 2026-10-08 23:37 前後 session 結束，背景工作收到 SIGTERM：
+  - GloVe 成本探測記為 aborted（`results/runs/20261008T144333Z-smoke`）：n = 100k、M = 48、efC = 400 三個實作已完整量完；
+    n = 1,183,514 只完成 hnswlib 的 build。後半段以 `glove-cost-probe-full.toml` 重跑。
+  - 100k 文字資料集在 embedding 階段中斷（只寫出 jsonl），從頭重跑（embedding 與批次組成無關，重跑結果應逐位元相同於未中斷的版本）。
+  - 中斷前機器的 15 分鐘 load 約 69、swap 使用約 2.6 GB（主要是其他專案的模擬器與虛擬機器）。
+- 進行中：產生 100k 文字資料集（背景，約 3 小時）；GloVe 完整大小的成本探測（smoke），作為正式格點 decision 的依據。
 
 尚未進 Advanced（Gate 條件都還沒有資料可判斷），沒有做任何 Optional。
 
@@ -47,7 +52,8 @@
 - `433a61f feat(datasets): register glove-100-angular with frozen ground truth`
 - `3882eca feat(datasets): register the EmbeddingGemma 2 text pilot`
 - `1bf8545 docs: decide the formal text workload scale and add the GloVe cost probe`
-- `feat(benchmarks): profile registered datasets and record the profiling context`（本次）
+- `793edc9 feat(benchmarks): profile registered datasets and record the profiling context`
+- `chore(benchmarks): rerun the full-size half of the GloVe cost probe`（本次）
 
 ## 最近完成：資料準備程式的審查（decision 011 補記）
 
