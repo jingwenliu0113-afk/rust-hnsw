@@ -1,4 +1,4 @@
-"""統一的 Python batch interface（decision 002）。
+"""統一的 Python batch interface（decision 002；efSearch 介面見 decision 006）。
 
 所有 ANN 實作都透過 `AnnIndex` adapter 被測：
 - 輸入：`prepare_vectors` 產生的 float32、C-contiguous、L2 正規化 2-D array。
@@ -25,6 +25,16 @@ class AnnIndex(Protocol):
 
     def search(self, queries: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
         """一次 FFI 呼叫處理整批 queries，回傳 `(ids, distances)`。"""
+        ...
+
+
+@runtime_checkable
+class HnswAnnIndex(AnnIndex, Protocol):
+    def set_ef_search(self, ef: int) -> None:
+        """設定之後 `search` 使用的 efSearch（decision 006）。
+
+        沒有預設值：必須在 `search` 之前呼叫，且 `ef ≥ 1`。harness 在計時外呼叫。
+        """
         ...
 
 
