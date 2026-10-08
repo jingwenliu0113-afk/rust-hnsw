@@ -1,8 +1,22 @@
 # NEXT
 
+## 待你處理（2026-10-09 整理；回來時一次看完，細節在下方 Deferred 與 B1–B3）
+
+目前所有不需要你的 Core 工作都已完成；剩下的正式 run 與 Gate profiling 都卡在下面幾項：
+
+1. **解除今晚的限制，並決定 B2（正式 run 的電力條件）**：今晚是自動電力模式、68W 供電，所有正式、performance-sensitive 的實驗都暫停中。
+   建議固定為：高效能模式（powermode 2）、你指定的變壓器瓦數、電池不在充電中；runner 已開始記錄這三項，但尚未當成前置條件。
+2. **B1：index memory 的定義**（必須在看到任何正式結果之前決定）：macOS 上已釋放的大型配置仍算在 rss，
+   Rust 在完整 GloVe 會被多算約一份資料（448 MiB）。建議改用 phys_footprint 的增量；選項與證據見 B1。
+3. **B3（不擋工作）**：系統 Xcode 在 01:05 被更新後，`/usr/bin/git` 與 `cc` 壞掉；我用 `DEVELOPER_DIR` 繞道，沒有動系統設定。
+   要修正需要 sudo（例如 `sudo xcode-select -s /Library/Developer/CommandLineTools`，或修復 Xcode）。
+
+你處理完 1、2 之後，我可以自行依「下一步」第 5 項的執行手冊接著做：閒置 load 量測（約 15 分鐘）→ 12 份 formal config
+（負載下上限約 19 小時，每份 0.3–2.6 小時，lock 拿不到就改天）→ Gate profiling → 正式報告。
+
 ## 目前位置
 
-**Core / Week 1 進行中**：
+**Core：除了正式 run 與 Gate profiling（等上面的事項）之外都已完成**：
 
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
   hnswlib / FAISS adapters（007）、benchmark runner（008，含實作後審查）、比較規則（010）、報告腳本。
@@ -69,7 +83,8 @@
 - `7580224 docs: add the formal-run runbook to NEXT`
 - `89b5f09 fix(benchmarks): close gate-tool gaps found in review`
 - `e0529a0 docs: defer the idle-load baseline until the formal power conditions are decided`
-- `feat(datasets): register the formal text workload and its formal configs`（本次）
+- `16c9c4a feat(datasets): register the formal text workload and its formal configs`
+- `docs: summarize what needs the user in NEXT`（本次）
 
 ## 最近完成：gate 工具的審查（008 / 009 / 010 / 013 補記）
 
@@ -229,7 +244,7 @@
 - **機器負載**：本 session 多次觀察到其他 Project 在不取 lock 的情況下跑 CPU 重工作（text-to-sql、agent-gym 各數個 100% CPU 的 process），
   1 分鐘 load 約 8.4；incident-investigator 也長時間持有 heavy lock（process 存活，不是 stale lock）。
   正式 run 會被 008 §2 的 load 門檻擋下（等待最多 10 分鐘後中止），這是預期行為；本專案沒有碰它們。
-- 本次沒有跑任何正式 benchmark，也沒有取用 Mac heavy lock 或遠端機器。smoke 輸出全部標記 `load`（因為上述負載），只用來驗證 runner。
+- 至今沒有跑任何正式 benchmark，也沒有取用 Mac heavy lock 或遠端機器。smoke 輸出多半標記 `load`（因為上述負載），只用來驗證 runner 與 correctness。
 - 本 Project 沒有使用 Docker。
 - 文字 embedding 在獨立的 `.venv-embed`（torch 2.14.1、transformers 5.19.0、sentence-transformers 6.1.0）產生，與 benchmark 用的 `.venv` 分開；
   模型以匿名方式從 Hugging Face 下載（不使用任何 token），快取在 `~/.cache/huggingface`。
