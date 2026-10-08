@@ -9,7 +9,7 @@
   Python binding skeleton、固定的 Python batch interface。
 - Core / Week 1 進行中：HNSW insert / search、save / load、Python binding 與 efSearch 介面、
   hnswlib / FAISS adapters、benchmark runner（smoke 已驗證）已完成。
-- 尚未有正式 benchmark 結果：第一組真實資料集還在等決定（見 `NEXT.md`）。
+- 尚未有正式 benchmark 結果。資料集已決定（decision 011），準備流程與文字 workload 的 pilot 進行中（見 `NEXT.md`）。
 
 ## 目錄
 
@@ -57,6 +57,20 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 
 輸出在 `results/runs/<UTC 時間>-<mode>/`（不進版控）。formal 需要已登記的真實資料集，目前還沒有。
 
+## 資料集（decision 011）
+
+資料檔放在 `datasets/`（不進 Git）；每個資料集的來源、checksum、切分與 frozen ground truth 記在 `benchmarks/manifests/<名稱>.json`。
+
+```bash
+# 標準 ANN：glove-100-angular（ann-benchmarks，463 MB）
+.venv/bin/python -m benchmarks.prepare_glove --download
+
+# 真實文字：Simple English Wikipedia + google/embeddinggemma-2（768 維、fp32、CPU）
+uv venv --python 3.13 .venv-embed
+uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
+.venv/bin/python -m benchmarks.prepare_text --name simplewiki-embeddinggemma2-pilot --n-base 10000 --n-queries 1000
+```
+
 報告（依 decision 010 的比較規則：frontier 讀值、variance、scaling、recall vs efSearch 圖）：
 
 ```bash
@@ -75,3 +89,4 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 - [008 benchmark runner 與量測協定的落實](docs/decisions/008-benchmark-runner.md)
 - [009 profiling 方法（Gate 證據的產生方式）](docs/decisions/009-profiling-method.md)
 - [010 比較規則與 variance 彙整（事先登記）](docs/decisions/010-comparison-rules.md)
+- [011 資料集：glove-100-angular 與 EmbeddingGemma 2 文字 workload](docs/decisions/011-datasets.md)

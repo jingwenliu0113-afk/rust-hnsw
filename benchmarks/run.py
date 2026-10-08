@@ -30,7 +30,7 @@ from typing import Callable
 
 import numpy as np
 
-from benchmarks import datasets, environment, evaluate, protocol
+from benchmarks import dataprep, datasets, environment, evaluate, protocol
 from benchmarks.config import IMPLEMENTATIONS, ConfigError, check_dataset_fit, execution_order, parse_config
 from benchmarks.environment import PreflightError
 from benchmarks.interface import prepare_vectors
@@ -141,6 +141,22 @@ class Hooks:
 # ---- run 的組成步驟 ----
 
 
+# 與 adapters 的 build 檢查相同的容許值（007 §1）。
+_UNIT_NORM_TOLERANCE = 1e-5
+
+
+def vectors_for_run(x: np.ndarray, prepared: bool) -> np.ndarray:
+    """synthetic 資料以 prepare_vectors 正規化；登記的資料集檔案已是 unit vectors，只驗證、原樣使用（011 §1）。"""
+    if not prepared:
+        return prepare_vectors(x)
+    if x.ndim != 2 or x.dtype != np.float32 or not x.flags.c_contiguous or not np.isfinite(x).all():
+        raise ValueError("dataset vectors must be finite, C-contiguous float32 2-D arrays")
+    squared = np.einsum("ij,ij->i", x, x, dtype=np.float64)
+    if np.abs(squared - 1.0).max() > _UNIT_NORM_TOLERANCE:
+        raise ValueError("dataset vectors must be unit vectors (prepare_vectors output)")
+    return x
+
+
 def _new_run_dir(output_root: Path, mode: str) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_root.mkdir(parents=True, exist_ok=True)
@@ -227,22 +243,40 @@ def _prepare_subsets(config, dataset, provided, train, queries, run_dir: Path) -
     records, gts = {}, {}
     for n in sorted({build.n for build in config.builds}):
         subset = train[:n]
-        exact = rust_hnsw.ExactIndex(train.shape[1])
-        exact.add(subset)
-        gt, _ = exact.search(queries, protocol.K)
-        del exact
+        frozen = getattr(dataset, "ground_truth", {}).get(n)
+        if frozen is not None:
+            gt, gt_source = _frozen_ground_truth(dataset, frozen, subset, queries)
+        else:
+            exact = rust_hnsw.ExactIndex(train.shape[1])
+            exact.add(subset)
+            gt, _ = exact.search(queries, protocol.K)
+            del exact
+            gt_source = {"kind": "computed"}
         gt_file = f"gt/n{n}.npy"
         np.save(run_dir / gt_file, gt)
         gts[n] = gt
         records[str(n)] = {
             "n": n,
             "gt_file": gt_file,
+            "gt_source": gt_source,
             "duplicate_row_fraction": evaluate.duplicate_row_fraction(subset),
             "rank1_tie_queries": evaluate.rank1_tie_queries(subset, queries, gt),
             "tie_eps": protocol.TIE_EPS,
             "provided_gt_agreement": _provided_gt_agreement(dataset, provided, n, train.shape[0], gt),
         }
     return records, gts
+
+
+def _frozen_ground_truth(dataset, name: str, subset, queries) -> tuple[np.ndarray, dict]:
+    """manifest 登記的 frozen ground truth：SHA-256 相符，且前 100 個 query 重新計算的 top-10 完全相同才使用（011 §1）。"""
+    path = Path(dataset.directory) / name
+    digest = environment.sha256_file(path)
+    if digest != dataset.sha256.get(name):
+        raise ValueError(f"frozen ground truth {name}: SHA-256 {digest} does not match the manifest")
+    full = np.load(path)
+    dataprep.verify_frozen_ground_truth(full, subset, queries)
+    return np.ascontiguousarray(full[:, : protocol.K]), {"kind": "frozen", "file": name, "sha256": digest,
+                                                          "verified_queries": dataprep.GT_VERIFY_QUERIES}
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -527,8 +561,8 @@ def run(config_text: str, mode: str, output_root, *, implementations=IMPLEMENTAT
     formal_checks = hooks.formal_preflight(context) if mode == "formal" else None
 
     loaded = datasets.load(dataset)
-    train = prepare_vectors(loaded.train)
-    queries = prepare_vectors(loaded.queries)
+    train = vectors_for_run(loaded.train, loaded.prepared)
+    queries = vectors_for_run(loaded.queries, loaded.prepared)
     provided = loaded.provided_neighbors
     # 原始陣列不再需要：避免父 process 在子 process 量測期間多持有一份完整的 train（008 §4）。
     del loaded

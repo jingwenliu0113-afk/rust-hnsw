@@ -30,3 +30,10 @@ echo "==> maturin develop (release)"
 
 echo "==> pytest"
 "$VIRTUAL_ENV/bin/python" -m pytest
+
+# EmbeddingGemma 2 的模型測試需要 .venv-embed（torch、sentence-transformers；decision 011 §3.4）。
+# 沒有建立時只跑上面主 venv 中的純函式測試（模型測試在那裡會 skip）。
+if [ -x .venv-embed/bin/python ]; then
+  echo "==> pytest (.venv-embed: EmbeddingGemma 2)"
+  HF_HUB_OFFLINE=1 .venv-embed/bin/python -m pytest tests/test_embed_text.py
+fi

@@ -7,7 +7,9 @@
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
   hnswlib / FAISS adapters（007）、benchmark runner（008，含實作後審查）、比較規則（010）、報告腳本。
 - 使用者已決定資料集（2026-10-08）：標準 ANN 用 `glove-100-angular`；真實文字 workload 用公開文字 corpus + `google/embeddinggemma-2`。
-- 進行中：資料集 decision（011）→ GloVe loader → EmbeddingGemma 小型 pilot。
+- 資料集 decision 011 已寫好；GloVe loader（`benchmarks/prepare_glove.py`）與文字 workload 的流程
+  （`text_corpus.py`、`embed_text.py`、`prepare_text.py`）已實作並測試。
+- 進行中：下載資料與模型，產生 glove-100-angular 的 `.npy` / frozen ground truth，以及 EmbeddingGemma 2 的 pilot（10,000 base + 1,000 query）。
 
 尚未進 Advanced（Gate 條件都還沒有資料可判斷），沒有做任何 Optional。
 
@@ -29,7 +31,8 @@
 - `2b783bd feat(benchmarks): add benchmark runner with pre-registered protocol`
 - `f4500ba feat(benchmarks): add report generation for the pre-registered comparison rules`
 - `beb8fd5 docs: record dataset proposal and idle-load attempt in NEXT`
-- `fix(benchmarks): harden runner after implementation review`（本次）
+- `0cd4e50 fix(benchmarks): harden runner after implementation review`
+- `feat(datasets): add GloVe and EmbeddingGemma 2 dataset preparation`（本次）
 
 ## 最近完成：runner 實作後的審查
 
@@ -73,8 +76,12 @@
 2. （已完成）分析 / 報告腳本。
 3. **閒置 load 的量測**（008 §2）：在沒有 lock holder、沒有其他重工作時量 10 分鐘，確認 4.0 的門檻；不符就另寫 decision log。
    - 2026-10-08 19:00 前後嘗試：incident-investigator 持有 heavy lock（soak），text-to-sql、agent-gym 各有 100% CPU 的 process，1 分鐘 load 約 7.8–8.2，無法量閒置基準。暫時 blocked，之後再試（只影響 formal run，不影響其他 Core 工作）。
-4. **資料集（使用者已決定）**：寫 decision 011 → GloVe loader（下載、轉 `.npy`、manifest、frozen ground truth）→
-   EmbeddingGemma 2 小型 pilot（公開文字 corpus、deterministic 且 disjoint 的 base / query、768d、bf16 或 fp32）。
+4. **資料集（使用者已決定，decision 011）**：
+   - 程式與測試已完成：GloVe 轉換、frozen ground truth（runner 以 SHA-256 加前 100 個 query 重算驗證後使用）、
+     manifest 登記、文字 corpus 的前處理與切分（以文章為單位、加鹽 SHA-256 排序、完全相同的文字只留一份）、
+     EmbeddingGemma 2 的 embedding（固定 revision、fp32、CPU、8 threads、拒絕 fp16、逐位元重現檢查）。
+   - 待完成：實際產生 glove-100-angular 與 pilot 的資料檔與 manifest（frozen ground truth：GloVe n = 100k / 300k / 1,183,514；pilot n = 10,000）。
+   - pilot 之後：另寫 decision 決定正式文字 workload 的規模（N 與登記的 n）。
 5. **第一張 recall vs efSearch 圖與正式 run**（formal config 先 commit，依 010 列出 variance 格點）。
 6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
 
@@ -89,11 +96,14 @@
   正式 run 會被 008 §2 的 load 門檻擋下（等待最多 10 分鐘後中止），這是預期行為；本專案沒有碰它們。
 - 本次沒有跑任何正式 benchmark，也沒有取用 Mac heavy lock 或遠端機器。smoke 輸出全部標記 `load`（因為上述負載），只用來驗證 runner。
 - 本 Project 沒有使用 Docker。
+- 文字 embedding 在獨立的 `.venv-embed`（torch 2.14.1、transformers 5.19.0、sentence-transformers 6.1.0）產生，與 benchmark 用的 `.venv` 分開；
+  模型以匿名方式從 Hugging Face 下載（不使用任何 token），快取在 `~/.cache/huggingface`。
 
 ## SPEC / decision 與現況差異
 
 - 004 只規定 M ≥ 2；005 補上 `MAX_M = 2^31 − 1`。
 - 004 的「hnswlib 尚未實測」已由 007 回填。
 - 007 §3「不產生 recall」已補記：Recall@1 另以 k = 1 search 取得（008 §7）。
+- 008 §4「每個 n 都在 run 中重算 ground truth」由 011 §1 修訂：有 frozen ground truth 的 n，驗證後使用；其他 n 照舊計算。
 - MACHINE_POLICY 的範例指令改為 `.venv/bin/python -m benchmarks.run`（只改範例，不改規則；`python benchmarks/run.py` 會 import 失敗）。
 - 其他沒有發現差異。

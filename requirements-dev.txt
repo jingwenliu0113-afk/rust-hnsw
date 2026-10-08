@@ -7,3 +7,6 @@ faiss-cpu==1.15.1
 hnswlib==0.8.0
 # 報告圖表（benchmarks/report.py，decision 010）。
 matplotlib==3.11.2
+# 資料集準備（decision 011）：讀 ann-benchmarks 的 HDF5 與 Wikipedia 的 parquet。
+h5py==3.16.0
+pyarrow==25.0.1

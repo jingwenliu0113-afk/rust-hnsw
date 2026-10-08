@@ -1,0 +1,13 @@
+# EmbeddingGemma 2 文字 embedding 的產生（decision 011 §3.4），安裝在獨立的 .venv-embed（不進 Git）：
+#   uv venv --python 3.13 .venv-embed && uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
+# 與 benchmark 用的 .venv 分開，避免 numpy 等套件被連帶改版而影響 decision 007 的實測語意。
+torch==2.14.1
+# EmbeddingGemma2Processor 的影像處理部分在 import 時需要（只用文字輸入也一樣）。
+torchvision==0.29.1
+transformers==5.19.0
+sentence-transformers==6.1.0
+numpy==2.5.3
+pyarrow==25.0.1
+# EmbeddingGemma2Processor 即使只處理文字也需要 PIL。
+pillow==12.3.0
+pytest==9.1.1

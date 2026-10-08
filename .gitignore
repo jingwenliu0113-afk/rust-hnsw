@@ -1,5 +1,6 @@
 /target/
 /.venv/
+/.venv-embed/
 __pycache__/
 .pytest_cache/
 *.so
