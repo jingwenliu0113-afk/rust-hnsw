@@ -95,7 +95,8 @@
      EmbeddingGemma 2 的 embedding（固定 revision、fp32、CPU、8 threads、拒絕 fp16、逐位元重現檢查）。
    - glove-100-angular 已登記（manifest 與 `glove-correctness.toml` 同一個 commit）。以修正後的程式重跑一次，
      train / queries / neighbors 與三個 frozen ground truth 共 6 個檔案的 SHA-256 與第一次完全相同（準備約 466 秒，peak RSS 約 3.1 GB）。
-   - pilot 以修正後的程式重跑（batch size 1）；manifest 與 `text-pilot-correctness.toml` 放在同一個 commit。
+   - pilot 已登記（manifest 與 `text-pilot-correctness.toml` 同一個 commit）：base 10,000、query 1,000、frozen ground truth n = 10,000；
+     batch size 1 下 base 約 1,124 秒、query 約 108 秒（機器 load 約 9–12，約 9 筆/秒），token 數最多 386、平均約 98，去重移除 6 段。
    - 之後：在兩個資料集上跑 correctness 用的 smoke run（recall vs efSearch，不作效能結論）。
    - pilot 之後：另寫 decision 決定正式文字 workload 的規模（N 與登記的 n）。
 5. **第一張 recall vs efSearch 圖與正式 run**（formal config 先 commit，依 010 列出 variance 格點）。

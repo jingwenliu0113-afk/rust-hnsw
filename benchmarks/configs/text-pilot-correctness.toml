@@ -1,0 +1,14 @@
+# 文字 workload pilot 的 correctness run（decision 011 §3.5）：以 smoke 模式執行，只檢查 recall 隨 efSearch 的變化與整條流程；
+# 計時數字不在 lock 下量測，不得用於任何效能結論（decision 008 §1）。
+schema_version = 1
+dataset = "simplewiki-embeddinggemma2-pilot"
+implementations = ["rust-hnsw", "hnswlib", "faiss-hnsw"]
+ef_search = [10, 16, 24, 32, 48, 64, 96, 128, 192, 256]
+child_timeout_s = 3600
+
+[[sweep]]
+n = [10000]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = []
