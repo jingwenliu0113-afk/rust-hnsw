@@ -1,0 +1,16 @@
+[package]
+name = "rust-hnsw-py"
+version = "0.1.0"
+description = "hnsw crate 的 Python binding（PyO3 + rust-numpy）"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "rust_hnsw"
+crate-type = ["cdylib"]
+
+[dependencies]
+hnsw = { path = "../crates/hnsw" }
+numpy = "0.29.0"
+pyo3 = "0.29.3"

@@ -1,0 +1,4 @@
+# 開發與 correctness 測試用（Python 3.13）。版本固定以便重現。
+maturin==1.15.0
+numpy==2.5.3
+pytest==9.1.1

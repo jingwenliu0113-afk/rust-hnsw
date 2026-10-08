@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# with-mac-lock
+#
+# 用法：
+#   ./tools/with-mac-lock <command> [args...]
+#
+# 用途：
+#   保證同一時間只有一個正式 Mac heavy workload。
+#   目前共用於：
+#   - Incident Investigator 正式 incident collection
+#   - Rust HNSW 正式 latency / throughput benchmark
+#
+# 注意：
+#   - 這個 script 只保護「正式 heavy workload」。
+#   - 寫 code、unit test、correctness test、文件等不需要它。
+
+set -u
+
+LOCK_DIR="/tmp/ai-portfolio-mac-heavy.lock"
+OWNER_FILE="$LOCK_DIR/owner.txt"
+
+if [ "$#" -eq 0 ]; then
+  echo "Usage: $0 <command> [args...]" >&2
+  exit 64
+fi
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  echo "ERROR: Mac heavy resource is currently locked." >&2
+  if [ -f "$OWNER_FILE" ]; then
+    echo "Current lock info:" >&2
+    cat "$OWNER_FILE" >&2
+  else
+    echo "Lock path: $LOCK_DIR" >&2
+  fi
+  echo "Do not delete the lock automatically. Switch to non-heavy work." >&2
+  exit 75
+fi
+
+cleanup() {
+  rm -f "$OWNER_FILE" 2>/dev/null || true
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+trap cleanup EXIT INT TERM HUP
+
+{
+  echo "pid=$$"
+  echo "started_at=$(date -Iseconds)"
+  echo "cwd=$(pwd)"
+  echo "command=$*"
+} > "$OWNER_FILE"
+
+"$@"
+exit_code=$?
+
+exit "$exit_code"

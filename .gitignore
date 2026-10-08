@@ -1,0 +1,8 @@
+/target/
+/.venv/
+__pycache__/
+.pytest_cache/
+*.so
+.DS_Store
+# 資料集不進版控
+/datasets/

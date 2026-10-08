@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["crates/hnsw", "python"]
+# `cargo test` 預設只跑純 Rust crate；Python binding 由 maturin build、pytest 測。
+default-members = ["crates/hnsw"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+publish = false

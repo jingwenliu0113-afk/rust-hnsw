@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.15,<2"]
+build-backend = "maturin"
+
+[project]
+name = "rust-hnsw"
+version = "0.1.0"
+description = "從零實作的 HNSW 的 Python binding"
+requires-python = ">=3.13"
+dependencies = ["numpy>=2"]
+
+[tool.maturin]
+module-name = "rust_hnsw"
+features = ["pyo3/extension-module"]

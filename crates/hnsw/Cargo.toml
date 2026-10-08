@@ -1,0 +1,9 @@
+[package]
+name = "hnsw"
+version = "0.1.0"
+description = "從零實作的 HNSW（cosine），附 exact brute-force baseline"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
