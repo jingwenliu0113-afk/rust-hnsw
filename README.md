@@ -114,11 +114,12 @@ uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
 .venv/bin/python -m benchmarks.report results/runs/<run 目錄> [<run 目錄> ...]
 ```
 
-Gate profiling（decision 015：依正式 run 選各實作 Recall@10 ≥ 0.95 的最小 ef，在 heavy lock 下取樣，取樣後核對 recall）：
+Gate profiling（decision 015：依正式 run 選各實作 Recall@10 ≥ 0.95 的最小 ef，在 heavy lock 下取樣，取樣後核對證據條件；
+計畫寫在 `results/` 下，不讓 repo 變 dirty）：
 
 ```bash
-.venv/bin/python -m benchmarks.gate_profile plan <該資料集全部 formal run 目錄> > plan.sh
-./tools/with-mac-lock bash plan.sh
+.venv/bin/python -m benchmarks.gate_profile plan <該資料集全部 formal run 目錄> > results/profiles/gate-<資料集>-plan.sh
+./tools/with-mac-lock bash results/profiles/gate-<資料集>-plan.sh
 .venv/bin/python -m benchmarks.gate_profile check <同一組 run 目錄>
 ```
 

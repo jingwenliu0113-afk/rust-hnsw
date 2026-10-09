@@ -216,15 +216,36 @@ def test_gate_evidence_needs_the_formal_power_conditions(monkeypatch):
         profile_module.evidence_conditions(evidence_args())
 
 
+@pytest.mark.parametrize("failing", ["check_git_clean", "check_binding_fresh"])
+def test_gate_evidence_needs_a_clean_checkout_and_a_fresh_binding(monkeypatch, failing):
+    # 015 §2：Gate 證據比照 formal run，git 不乾淨或 binding 過舊就拒絕。
+    monkeypatch.setattr(profile_module, "lock_state", lambda: {"held_by_ancestor": True, "owner": "x"})
+    monkeypatch.setattr(environment, "power_state", lambda: dict(EVIDENCE_POWER))
+    for name in ("check_git_clean", "check_binding_fresh"):
+        monkeypatch.setattr(environment, name, lambda *a, **k: None)
+    monkeypatch.setattr(environment, "git_head", lambda repo: ("abc", 0))
+    monkeypatch.setattr(environment, "tracked_files", lambda repo: [])
+
+    def fail(*args, **kwargs):
+        raise environment.PreflightError(failing)
+
+    monkeypatch.setattr(environment, failing, fail)
+    monkeypatch.setattr(environment, "wait_for_load", lambda *a, **k: pytest.fail("must refuse before the load gate"))
+    with pytest.raises(SystemExit, match="clean checkout and a fresh binding"):
+        profile_module.evidence_conditions(evidence_args())
+
+
 def test_gate_evidence_waits_for_background_work_and_records_the_conditions(monkeypatch):
     monkeypatch.setattr(profile_module, "lock_state", lambda: {"held_by_ancestor": True, "owner": "x"})
     monkeypatch.setattr(environment, "power_state", lambda: dict(EVIDENCE_POWER))
+    monkeypatch.setattr(profile_module, "check_code_state", lambda: {"commit": "abc"})
     seen = iter([[{"pid": 9, "pcpu": 99.0, "command": "agent"}], []])
     monkeypatch.setattr(environment, "background_processes", lambda exclude: next(seen))
     monkeypatch.setattr(profile_module.os, "getloadavg", lambda: (1.0, 1.0, 1.0))
     monkeypatch.setattr(profile_module.time, "sleep", lambda s: None)
     conditions = profile_module.evidence_conditions(evidence_args())
     assert conditions["power"]["powermode"] == 2 and len(conditions["gate_samples"]) == 2
+    assert conditions["code"] == {"commit": "abc"}
 
 
 def test_tool_checks_without_the_lock_are_not_gated(monkeypatch):

@@ -278,7 +278,8 @@ def test_variance_cells_follow_013_per_dataset_and_target():
         "0.90": [(16, 200)], "0.95": [(16, 200)], "0.99": [(16, 200)]}
     # 其他 n 不是 variance 格點；沒有登記的資料集沒有 seed 範圍。
     other_n = seeds("rust-hnsw", [(1, [(64, 0.995, 900.0)])], n=300_000)
-    assert build_report([make_record(other_n, dataset=GLOVE)])["variance_ranges"]["0.95"] == []
+    missing = build_report([make_record(other_n, dataset=GLOVE)])["variance_ranges"]["0.95"]
+    assert [(e["m"], e["missing"]) for e in missing] == [(16, True), (48, True)]  # 缺資料時列出，不靜默略過
     assert build_report([make_record(cells, dataset="d")])["variance_ranges"] == {}
 
 
@@ -288,43 +289,143 @@ def test_variance_ranges_exclude_flagged_builds_like_the_main_reading():
     assert entry["builds"] == 1 and entry["qps"]["max"] == 500.0
 
 
-def gate_for(rust_qps, hnswlib_qps, rust_recall=0.96, hnswlib_recall=0.96, dataset=TEXT):
-    rust = seeds("rust-hnsw", [(s, [(64, rust_recall, q)]) for s, q in enumerate(rust_qps, start=1)])
-    hnswlib = seeds("hnswlib", [(s, [(64, hnswlib_recall, q)]) for s, q in enumerate(hnswlib_qps, start=1)])
-    return build_report([make_record(rust + hnswlib, dataset=dataset)])["gate"]
+def test_reaching_the_target_uses_the_median_over_seeds():
+    # 三個 seed 的 recall 落在目標兩側：median 0.951 達到（min 沒有）、median 0.945 沒有達到（max 有）。
+    rust = seeds("rust-hnsw", [(s, [(32, r32, 1000.0), (48, r48, 800.0)])
+                               for s, r32, r48 in [(1, 0.93, 0.94), (2, 0.945, 0.951), (3, 0.96, 0.96)]])
+    (entry,) = build_report([make_record(rust, dataset=TEXT)])["variance_ranges"]["0.95"]
+    assert entry["ef_search"] == 48 and entry["same_region"] is True
 
 
-def test_gate_reports_a_gap_only_beyond_the_ladder_quantization_and_with_separated_seed_ranges():
-    gate = gate_for([100.0, 110.0, 105.0], [150.0, 160.0, 155.0])
-    assert gate["0.95"]["ratio"] == pytest.approx(155.0 / 105.0)
-    assert gate["0.95"]["verdict"] == "gap" and gate["0.95"]["primary"] is True
-    assert gate["0.90"]["primary"] is False
-    assert gate["0.99"]["verdict"] == "undetermined"  # 兩者都沒有達到 0.99
+def test_the_seed_range_table_marks_padded_points_and_lists_both_versions_when_flags_matter():
+    rust = seeds("rust-hnsw", [(1, [(64, 0.96, 500.0)]), (2, [(64, 0.96, 9000.0)])], flagged=(2,))
+    rust[0]["points"][0]["k10"]["incomplete"] = True
+    text = markdown(build_report([make_record(rust, dataset=TEXT)]))
+    assert "| 0.95 | (16, 200) | rust-hnsw | 64（不足 k） | 1 |" in text
+    assert "### 包含被標記 build 的 seed 範圍" in text and "| 0.95 | (16, 200) | rust-hnsw | 64（不足 k） | 2 |" in text
 
 
-@pytest.mark.parametrize("rust_qps, hnswlib_qps, verdict", [
-    ([100.0, 110.0, 105.0], [130.0, 140.0, 135.0], "no_gap"),     # 比值約 1.29 < 4/3：與梯子的量化誤差無法區分
-    ([300.0, 310.0, 305.0], [100.0, 110.0, 105.0], "no_gap"),     # rust 較快
-    ([100.0, 200.0, 105.0], [150.0, 160.0, 155.0], "uncertain"),  # 比值 ≥ 4/3，但 seed 範圍重疊
-])
-def test_gate_verdicts(rust_qps, hnswlib_qps, verdict):
-    assert gate_for(rust_qps, hnswlib_qps)["0.95"]["verdict"] == verdict
+def text_cell(impl, per_seed, m=16, n=100_000, flagged=()):
+    """per_seed = {seed: [(ef, recall, qps), ...]}"""
+    return seeds(impl, sorted(per_seed.items()), m=m, n=n, flagged=flagged)
 
 
-def test_the_gate_threshold_is_inclusive():
-    assert gate_for([300.0], [400.0])["0.95"]["verdict"] == "gap"
-    assert gate_for([300.0], [399.0])["0.95"]["verdict"] == "no_gap"
+def three_seeds(points, jitter=(0.0, 10.0, -10.0)):
+    return {s: [(ef, r, q + d) for ef, r, q in points] for s, d in zip((1, 2, 3), jitter)}
 
 
-def test_the_gate_needs_every_attached_cell_to_separate():
-    # GloVe 的 0.95 附 (16, 200) 與 (48, 200)：(48, 200) 只到最大 ef 仍未達到時，不得判為有差距。
-    rust = seeds("rust-hnsw", [(1, [(64, 0.96, 100.0)])]) + seeds("rust-hnsw", [(1, [(64, 0.94, 50.0)])], m=48)
-    hnswlib = seeds("hnswlib", [(1, [(64, 0.96, 200.0)])]) + seeds("hnswlib", [(1, [(64, 0.96, 90.0)])], m=48)
-    gate = build_report([make_record(rust + hnswlib, dataset=GLOVE)])["gate"]["0.95"]
-    assert [(c["m"], c["same_region"], c["separated"]) for c in gate["cells"]] == [(16, True, True), (48, False, False)]
-    assert gate["verdict"] == "uncertain"
+def gate(children, dataset=TEXT, target="0.95"):
+    return build_report([make_record(children, dataset=dataset)])["gate"][target]
+
+
+def test_qps_bracket_is_bounded_by_the_ef_before_each_crossing_without_interpolation():
+    aggregates = report_module.aggregate(report_module.point_rows([make_record(
+        text_cell("rust-hnsw", {1: [(32, 0.93, 1000.0), (48, 0.96, 800.0), (64, 0.97, 850.0)]})
+        + text_cell("rust-hnsw", {1: [(32, 0.90, 1500.0), (48, 0.92, 1200.0)]}, m=8)       # 格點內沒有達標
+        + text_cell("rust-hnsw", {1: [(32, 0.99, 9000.0)]}, n=30_000))]))                   # 其他 n 不算
+    bracket = report_module.qps_bracket(aggregates, "rust-hnsw", 100_000, 0.95)
+    # lower = 達標點中最高的 QPS（frontier 讀值）；upper = 交點前一個 ef 與未達標格點最大 ef 的 QPS 取最大。
+    assert bracket == {"reached": True, "lower": 850.0, "upper": 1200.0, "unbounded_cells": []}
+    unbounded = report_module.qps_bracket(aggregates, "rust-hnsw", 30_000, 0.95)
+    assert unbounded["upper"] is None and unbounded["unbounded_cells"] == [[16, 200]]
+    assert report_module.qps_bracket(aggregates, "rust-hnsw", 100_000, 0.99) == {"reached": False}
+
+
+def test_gate_reports_a_gap_when_brackets_and_seed_ranges_separate():
+    rust = text_cell("rust-hnsw", three_seeds([(32, 0.93, 1000.0), (48, 0.96, 800.0)]))
+    hnswlib = text_cell("hnswlib", three_seeds([(24, 0.94, 2400.0), (32, 0.955, 2000.0), (48, 0.97, 1600.0)]))
+    entry = gate(rust + hnswlib)
+    main = entry["main"]
+    assert main["brackets"]["rust-hnsw"]["lower"] == 800.0 and main["brackets"]["rust-hnsw"]["upper"] == 1000.0
+    assert main["direction"] == "compared_faster" and main["verdict"] == "gap" and entry["primary"] is True
+    (cell,) = main["cells"]
+    # hnswlib 在交點之後（ef 32）最慢的 seed 對 rust 在交點之前（ef 32）最快的 seed。
+    assert (cell["faster"]["ef_search"], cell["faster"]["value"]) == (32, 1990.0)
+    assert (cell["slower"]["ef_search"], cell["slower"]["value"]) == (32, 1010.0)
+    assert entry["differs"] is False
+
+
+def test_a_reading_gap_inside_the_ef_ladder_is_not_a_gap():
+    # 審查的反例：兩者真實速度相近，rust 的交點剛好在 64 之上（讀值取 96），hnswlib 在 64 就達標。
+    # 讀值比值 1000 / 700 ≈ 1.43，但 rust 的上界（ef 64 的 1000）不低於 hnswlib 的下界，不得判為有差距。
+    rust = text_cell("rust-hnsw", three_seeds([(64, 0.949, 1000.0), (96, 0.96, 700.0)]))
+    hnswlib = text_cell("hnswlib", three_seeds([(48, 0.94, 1300.0), (64, 0.951, 1000.0)]))
+    entry = gate(rust + hnswlib)
+    assert build_report([make_record(rust + hnswlib, dataset=TEXT)])["ratios"]["100000"]["0.95"]["hnswlib"] > 1.4
+    assert entry["main"]["verdict"] == "within_quantization" and entry["main"]["cells"] == []
+
+
+def test_gate_reports_rust_faster_symmetrically():
+    rust = text_cell("rust-hnsw", three_seeds([(24, 0.94, 2400.0), (32, 0.955, 2000.0)]))
+    hnswlib = text_cell("hnswlib", three_seeds([(32, 0.93, 1000.0), (48, 0.96, 800.0)]))
+    assert gate(rust + hnswlib)["main"]["verdict"] == "rust_faster"
+
+
+def test_a_slower_side_that_never_reaches_the_target_in_the_cell_is_bounded_by_its_largest_ef():
+    rust = (text_cell("rust-hnsw", three_seeds([(32, 0.90, 1000.0), (48, 0.93, 800.0)]))
+            + text_cell("rust-hnsw", three_seeds([(24, 0.94, 900.0), (32, 0.96, 700.0)]), m=32))
+    hnswlib = text_cell("hnswlib", three_seeds([(24, 0.94, 2400.0), (32, 0.955, 2000.0)]))
+    main = gate(rust + hnswlib)["main"]
+    assert main["brackets"]["rust-hnsw"] == {"reached": True, "lower": 700.0, "upper": 900.0, "unbounded_cells": []}
+    (cell,) = main["cells"]
+    assert (cell["slower"]["ef_search"], cell["slower"]["value"]) == (48, 810.0) and main["verdict"] == "gap"
+
+
+def test_overlapping_seed_ranges_make_the_gate_uncertain():
+    rust = text_cell("rust-hnsw", three_seeds([(32, 0.93, 1000.0), (48, 0.96, 800.0)], jitter=(0.0, 900.0, -10.0)))
+    hnswlib = text_cell("hnswlib", three_seeds([(24, 0.94, 2400.0), (32, 0.955, 2000.0)], jitter=(0.0, -150.0, 10.0)))
+    main = gate(rust + hnswlib)["main"]
+    assert main["direction"] == "compared_faster" and main["verdict"] == "uncertain"
+    assert main["cells"][0]["faster"]["value"] == 1850.0 and main["cells"][0]["slower"]["value"] == 1900.0
+
+
+def test_equal_seed_extremes_are_not_separated():
+    rust = text_cell("rust-hnsw", three_seeds([(32, 0.93, 1000.0), (48, 0.96, 800.0)], jitter=(0.0, 0.0, 0.0)))
+    hnswlib = text_cell("hnswlib", three_seeds([(24, 0.94, 2400.0), (32, 0.955, 2000.0)], jitter=(0.0, 0.0, -1000.0)))
+    cell = gate(rust + hnswlib)["main"]["cells"][0]
+    assert (cell["faster"]["value"], cell["slower"]["value"], cell["separated"]) == (1000.0, 1000.0, False)
+
+
+def test_seed_ranges_need_at_least_three_unflagged_builds():
+    rust = text_cell("rust-hnsw", {s: [(32, 0.93, 1000.0), (48, 0.96, 800.0)] for s in (1, 2)})
+    hnswlib = text_cell("hnswlib", {s: [(24, 0.94, 2400.0), (32, 0.955, 2000.0)] for s in (1, 2)})
+    main = gate(rust + hnswlib)["main"]
+    assert main["cells"][0]["slower"]["status"] == "few_builds" and main["verdict"] == "uncertain"
+
+
+def test_an_unknown_upper_bound_never_yields_a_gap():
+    # rust 在格點的第一個 ef 就已達標：真正的交點可能在更小的 ef、QPS 更高，上界未知。
+    rust = text_cell("rust-hnsw", three_seeds([(32, 0.96, 500.0)]))
+    hnswlib = text_cell("hnswlib", three_seeds([(24, 0.94, 3000.0), (32, 0.96, 2500.0)]))
+    main = gate(rust + hnswlib)["main"]
+    assert main["brackets"]["rust-hnsw"]["upper"] is None and main["verdict"] == "within_quantization"
+
+
+def test_gate_is_undetermined_when_either_side_misses_the_target():
+    rust = text_cell("rust-hnsw", three_seeds([(32, 0.93, 1000.0), (48, 0.996, 800.0)]))
+    hnswlib = text_cell("hnswlib", three_seeds([(32, 0.955, 2000.0), (48, 0.98, 1500.0)]))
+    entry = gate(rust + hnswlib, target="0.99")
+    assert entry["main"]["verdict"] == "undetermined" and entry["primary"] is False
+
+
+def test_every_attached_cell_must_separate_and_flag_exclusion_is_reported():
+    # GloVe 0.95 附 (16, 200) 與 (48, 200)。(48, 200) 的 rust build 全部被標記：主要判讀缺資料 → 不確定；
+    # 包含被標記 build 時兩格都分開 → 有差距。兩者不同，依 010 §3 並列。
+    rust = (text_cell("rust-hnsw", three_seeds([(32, 0.93, 1000.0), (48, 0.96, 800.0)]))
+            + text_cell("rust-hnsw", three_seeds([(32, 0.94, 500.0), (48, 0.97, 400.0)]), m=48, flagged=(1, 2, 3)))
+    hnswlib = (text_cell("hnswlib", three_seeds([(24, 0.94, 2400.0), (32, 0.955, 2000.0)]))
+               + text_cell("hnswlib", three_seeds([(32, 0.94, 1300.0), (48, 0.96, 1200.0)]), m=48))
+    entry = gate(rust + hnswlib, dataset=GLOVE)
+    assert [(c["m"], c["separated"]) for c in entry["main"]["cells"]] == [(16, True), (48, False)]
+    assert entry["main"]["cells"][1]["slower"]["status"] == "missing"
+    assert entry["main"]["verdict"] == "uncertain" and entry["all_builds"]["verdict"] == "gap" and entry["differs"]
     text = markdown(build_report([make_record(rust + hnswlib, dataset=GLOVE)]))
-    assert "## Gate 讀值" in text and "(48, 200)：不在同一 recall 區間" in text
+    assert "## Gate 讀值" in text and "rust-hnsw：沒有未標記的 build" in text
+    assert "有差距（hnswlib 較快）（與主要判讀不同）" in text
+
+
+def test_unregistered_datasets_have_no_gate_reading():
+    assert build_report([make_record(text_cell("rust-hnsw", three_seeds([(32, 0.96, 1.0)])), dataset="d")])["gate"] == {}
 
 
 # ---- 010 §5：scaling ----

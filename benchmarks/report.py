@@ -66,8 +66,8 @@ VARIANCE_METRICS = ("recall10", "qps", "p50_ns", "p95_ns")
 # 015：Gate 證據的建議判讀（是否進 Advanced 由使用者決定）。
 GATE_COMPARED = "hnswlib"
 GATE_PRIMARY_TARGET = "0.95"
-# 013 §2：ef 梯子的間距讓單一 QPS 讀值最多低估約 25–33%；比值低於 4/3 時無法與這個量化誤差區分。
-GATE_GAP_RATIO = 4 / 3
+# 015 §1：作為 seed 範圍至少要有的未標記 build 數（variance 格點有 5 個 seed）。
+GATE_MIN_BUILDS = 3
 # 合併的 run 之間必須相同的資料集紀錄（同名資料集重新準備時，向量或 ground truth 可能不同）。
 DATASET_IDENTITY = ("name", "kind", "n_train", "n_queries", "dim", "metric", "files_sha256")
 
@@ -212,60 +212,142 @@ def ratios(front: dict) -> dict:
     return dict(result)
 
 
-def variance_ranges(clean_aggregates: list[dict], dataset: str) -> dict:
+def _cell_points(aggregates: list[dict], impl: str, n: int, m: int, efc: int) -> list[dict]:
+    return sorted((a for a in aggregates if (a["implementation"], a["n"], a["m"], a["ef_construction"]) == (impl, n, m, efc)),
+                  key=lambda a: a["ef_search"])
+
+
+def _first_reaching(points: list[dict], target: float) -> int | None:
+    """依 ef 排序的點中，median Recall@10 第一次 ≥ 目標的位置（010 §2）。"""
+    return next((i for i, a in enumerate(points) if a["recall10"] is not None and a["recall10"]["median"] >= target), None)
+
+
+def variance_ranges(aggregates: list[dict], dataset: str, implementations) -> dict:
     """013 §3 第 2 點：每個目標、每個 variance 格點、每個實作，在該實作自己的最小達標 ef 上的跨 seed min–max。
 
     格點在 ef 清單內沒有達到目標時，改用該格最大的 ef，並以 `same_region = False` 標明與讀值不在同一 recall 區間（013 §3 的 fallback）。
-    用排除被標記 build 之後的彙整（與主要讀值相同，010 §2）。
+    某實作在格點上沒有任何（未標記的）build 時，列為 `missing`，不靜默略過。
     """
     result = {}
     for target, cells in VARIANCE_CELLS.get(dataset, {}).items():
         entries = []
         for m, efc in cells:
-            for impl in sorted({a["implementation"] for a in clean_aggregates}):
-                points = sorted((a for a in clean_aggregates
-                                 if (a["implementation"], a["n"], a["m"], a["ef_construction"]) == (impl, VARIANCE_N, m, efc)),
-                                key=lambda a: a["ef_search"])
+            for impl in implementations:
+                base = {"implementation": impl, "n": VARIANCE_N, "m": m, "ef_construction": efc}
+                points = _cell_points(aggregates, impl, VARIANCE_N, m, efc)
                 if not points:
+                    entries.append({**base, "missing": True})
                     continue
-                reaching = [a for a in points if a["recall10"] is not None and a["recall10"]["median"] >= float(target)]
-                chosen = reaching[0] if reaching else points[-1]
-                entries.append({"implementation": impl, "n": VARIANCE_N, "m": m, "ef_construction": efc,
-                                "ef_search": chosen["ef_search"], "same_region": bool(reaching),
+                first = _first_reaching(points, float(target))
+                chosen = points[-1] if first is None else points[first]
+                entries.append({**base, "missing": False, "ef_search": chosen["ef_search"], "same_region": first is not None,
                                 "builds": chosen["builds"], "incomplete": chosen["incomplete"],
                                 **{metric: chosen[metric] for metric in VARIANCE_METRICS}})
         result[target] = entries
     return result
 
 
-def gate_reading(ratios_by_n: dict, ranges: dict) -> dict:
-    """015 §1：主要 n 上 hnswlib 與 rust-hnsw 的 QPS 差距（建議判讀；是否進 Advanced 由使用者決定）。
+def qps_bracket(aggregates: list[dict], impl: str, n: int, target: float) -> dict:
+    """015 §1：不內插，在已量測的 (M, efC) 格點中、recall 恰好達到目標時可得的最高 QPS 的範圍 [lower, upper]。
 
-    - `gap`：hnswlib ÷ rust ≥ 4/3，而且每個附上的 variance 格點上 hnswlib 最慢的 seed 仍快於 rust 最快的 seed；
-    - `no_gap`：比值 < 4/3（含 rust 較快）；
-    - `uncertain`：比值 ≥ 4/3，但某個格點的 seed 範圍重疊或不在同一 recall 區間；
+    每個格點裡，recall 第一次達到目標的 ef 與它前一個 ef 夾住真正的交點；QPS 隨 ef 遞減，所以前一個 ef 的 QPS 是該格的上界。
+    - lower：所有達標點中最高的 QPS，等於 frontier 的 QPS 讀值（010 §2）。
+    - upper：各格上界的最大值。格點的第一個 ef 就已達標時上界未知（upper = None）；
+      格點在 ef 清單內沒有達標時，交點在最大 ef 之後，以最大 ef 的 QPS 為上界。
+    假設 recall 不會在相鄰兩個量測的 ef 之間先超過目標再掉回去。
+    """
+    cells = defaultdict(list)
+    for a in aggregates:
+        if (a["implementation"], a["n"]) == (impl, n) and a["qps"] is not None:
+            cells[(a["m"], a["ef_construction"])].append(a)
+    lower, uppers, unbounded = None, [], []
+    for (m, efc), points in sorted(cells.items()):
+        points.sort(key=lambda a: a["ef_search"])
+        first = _first_reaching(points, target)
+        if first is None:
+            uppers.append(points[-1]["qps"]["median"])
+            continue
+        best = max(a["qps"]["median"] for a in points[first:] if a["recall10"]["median"] >= target)
+        lower = best if lower is None else max(lower, best)
+        if first == 0:
+            unbounded.append([m, efc])
+        else:
+            uppers.append(points[first - 1]["qps"]["median"])
+    if lower is None:
+        return {"reached": False}
+    return {"reached": True, "lower": lower, "upper": None if unbounded else max([lower, *uppers]),
+            "unbounded_cells": unbounded}
+
+
+def _cell_side(aggregates: list[dict], impl: str, m: int, efc: int, target: float, side: str) -> dict:
+    """variance 格點上，一個實作在目標交點附近的 seed 範圍端點（015 §1）。
+
+    - side = "lower"（較快的一方）：第一個達標 ef 上最慢的 seed；
+    - side = "upper"（較慢的一方）：前一個 ef 上最快的 seed；格點內沒有達標時用最大 ef；第一個 ef 就達標時上界未知。
+    """
+    points = _cell_points(aggregates, impl, VARIANCE_N, m, efc)
+    if not points:
+        return {"status": "missing"}
+    first = _first_reaching(points, target)
+    if side == "lower":
+        if first is None:
+            return {"status": "not_reached"}
+        point, value = points[first], points[first]["qps"]["min"]
+    else:
+        if first == 0:
+            return {"status": "unbounded"}
+        point = points[-1] if first is None else points[first - 1]
+        value = point["qps"]["max"]
+    entry = {"ef_search": point["ef_search"], "builds": point["builds"], "value": value}
+    if point["builds"] < GATE_MIN_BUILDS:
+        return {"status": "few_builds", **entry}
+    return {"status": "ok", **entry}
+
+
+def _gate_target(aggregates: list[dict], dataset: str, target: str) -> dict:
+    t = float(target)
+    rust = qps_bracket(aggregates, BASELINE, VARIANCE_N, t)
+    other = qps_bracket(aggregates, GATE_COMPARED, VARIANCE_N, t)
+    entry = {"brackets": {BASELINE: rust, GATE_COMPARED: other}, "direction": None, "cells": []}
+    if not (rust["reached"] and other["reached"]):
+        return {**entry, "verdict": "undetermined"}
+    if rust["upper"] is not None and other["lower"] > rust["upper"]:
+        direction, faster, slower = "compared_faster", GATE_COMPARED, BASELINE
+    elif other["upper"] is not None and rust["lower"] > other["upper"]:
+        direction, faster, slower = "rust_faster", BASELINE, GATE_COMPARED
+    else:
+        return {**entry, "verdict": "within_quantization"}
+    cells = []
+    for m, efc in VARIANCE_CELLS[dataset][target]:
+        fast = _cell_side(aggregates, faster, m, efc, t, "lower")
+        slow = _cell_side(aggregates, slower, m, efc, t, "upper")
+        cells.append({"m": m, "ef_construction": efc, "faster": {"implementation": faster, **fast},
+                      "slower": {"implementation": slower, **slow},
+                      "separated": fast["status"] == slow["status"] == "ok" and fast["value"] > slow["value"]})
+    if not all(c["separated"] for c in cells):
+        verdict = "uncertain"
+    else:
+        verdict = "gap" if direction == "compared_faster" else "rust_faster"
+    return {**entry, "direction": direction, "cells": cells, "verdict": verdict}
+
+
+def gate_reading(clean_aggregates: list[dict], all_aggregates: list[dict], dataset: str) -> dict:
+    """015 §1：主要 n 上 hnswlib 與 rust-hnsw 的差距（建議判讀；是否進 Advanced 由使用者決定）。
+
+    - `gap`：hnswlib 的 QPS 下界 > rust-hnsw 的上界（qps_bracket），而且每個附上的 variance 格點上，
+      hnswlib 在交點之後最慢的 seed 仍快於 rust-hnsw 在交點之前最快的 seed（各至少 GATE_MIN_BUILDS 個 build）；
+    - `rust_faster`：方向相反、條件相同；
+    - `within_quantization`：兩者的 QPS 範圍重疊，ef 梯子的量化之內無法區分；
+    - `uncertain`：範圍分開，但某個附上的 variance 格點的 seed 範圍沒有分開、缺資料或 build 不足；
     - `undetermined`：任一方沒有達到目標。
+    主要判讀排除有 hygiene 標記的 build（010 §2）；另以全部 build 再判讀一次，不同時兩者並列（010 §3）。
     """
     result = {}
-    per_target = ratios_by_n.get(str(VARIANCE_N), {})
-    for target, entries in ranges.items():
-        ratio = per_target.get(target, {}).get(GATE_COMPARED)
-        cells = []
-        for m, efc in sorted({(e["m"], e["ef_construction"]) for e in entries}):
-            pair = {e["implementation"]: e for e in entries if (e["m"], e["ef_construction"]) == (m, efc)}
-            rust, other = pair.get(BASELINE), pair.get(GATE_COMPARED)
-            same = bool(rust and other and rust["same_region"] and other["same_region"] and rust["qps"] and other["qps"])
-            cells.append({"m": m, "ef_construction": efc, "same_region": same,
-                          "separated": same and other["qps"]["min"] > rust["qps"]["max"]})
-        if ratio is None:
-            verdict = "undetermined"
-        elif ratio < GATE_GAP_RATIO:
-            verdict = "no_gap"
-        elif cells and all(c["separated"] for c in cells):
-            verdict = "gap"
-        else:
-            verdict = "uncertain"
-        result[target] = {"ratio": ratio, "cells": cells, "verdict": verdict, "primary": target == GATE_PRIMARY_TARGET}
+    for target in VARIANCE_CELLS.get(dataset, {}):
+        main = _gate_target(clean_aggregates, dataset, target)
+        everything = _gate_target(all_aggregates, dataset, target)
+        result[target] = {"main": main, "all_builds": everything, "differs": main["verdict"] != everything["verdict"],
+                          "primary": target == GATE_PRIMARY_TARGET}
     return result
 
 
@@ -414,8 +496,8 @@ def build_report(records: list[dict], labels: list[str] | None = None, changed_f
     all_aggregates = aggregate(original)
     clean_aggregates = aggregate([r for r in original if not r["flags"]])
     front = frontier(all_aggregates, clean_aggregates)
-    front_ratios = ratios(front)
-    ranges = variance_ranges(clean_aggregates, records[0]["dataset"]["name"])
+    dataset = records[0]["dataset"]["name"]
+    implementations = sorted({a["implementation"] for a in all_aggregates})
     in_cell = [a for a in all_aggregates if (a["m"], a["ef_construction"]) == AUX_SCALING_CELL]
     clean_in_cell = [a for a in clean_aggregates if (a["m"], a["ef_construction"]) == AUX_SCALING_CELL]
     failed = [
@@ -433,9 +515,10 @@ def build_report(records: list[dict], labels: list[str] | None = None, changed_f
         "aux_scaling_cell": list(AUX_SCALING_CELL),
         "aux_scaling_frontier": frontier(in_cell, clean_in_cell, compared=AUX_SCALING_METRICS),
         "excluded_runs": [],
-        "ratios": front_ratios,
-        "variance_ranges": ranges,
-        "gate": gate_reading(front_ratios, ranges),
+        "ratios": ratios(front),
+        "variance_ranges": variance_ranges(clean_aggregates, dataset, implementations),
+        "variance_ranges_all_builds": variance_ranges(all_aggregates, dataset, implementations),
+        "gate": gate_reading(clean_aggregates, all_aggregates, dataset),
         "seed_variance": all_aggregates,
         "order_variance": order_variance(rows),
         "scaling": scaling(build_rows(records)),
@@ -472,6 +555,56 @@ def _reading_cell(reading: dict | None, metric: str, scale: float, digits: int) 
         f" [{item['min'] / scale:.{digits}f}, {item['max'] / scale:.{digits}f}]（{item['builds']} builds）"
     return (f"{item['value'] / scale:.{digits}f}{spread} @ M={item['m']}, efC={item['ef_construction']}, "
             f"ef={item['ef_search']}{mark}")
+
+
+GATE_VERDICTS = {"gap": f"有差距（{GATE_COMPARED} 較快）", "rust_faster": "rust-hnsw 較快",
+                 "within_quantization": "在 ef 梯子的量化範圍內，無法區分", "uncertain": "不確定（seed 範圍未分開或資料不足）",
+                 "undetermined": "無法判定（有一方未達到目標）"}
+GATE_CELL_STATUS = {"missing": "沒有未標記的 build", "not_reached": "未達到目標", "unbounded": "第一個 ef 就已達到，上界未知",
+                    "few_builds": f"未標記的 build 少於 {GATE_MIN_BUILDS} 個"}
+
+
+def _variance_rows(ranges: dict) -> list[str]:
+    def span(summary, scale=1.0, digits=0):
+        return "—" if summary is None else (f"{summary['median'] / scale:.{digits}f} "
+                                           f"[{summary['min'] / scale:.{digits}f}, {summary['max'] / scale:.{digits}f}]")
+    rows = []
+    for target, entries in ranges.items():
+        for e in entries:
+            cell = f"| {target} | ({e['m']}, {e['ef_construction']}) | {e['implementation']} |"
+            if e["missing"]:
+                rows.append(f"{cell} — | 0 | 沒有未標記的 build | | | | |")
+                continue
+            mark = "（不足 k）" if e["incomplete"] else ""
+            rows.append(f"{cell} {e['ef_search']}{mark} | {e['builds']} | {span(e['recall10'], digits=4)} | {span(e['qps'])} | "
+                        f"{span(e['p50_ns'], 1e3, 1)} | {span(e['p95_ns'], 1e3, 1)} | "
+                        f"{'是' if e['same_region'] else '否（最大 ef 仍未達到，013 §3 fallback）'} |")
+    return rows
+
+
+def _bracket_cell(bracket: dict) -> str:
+    if not bracket["reached"]:
+        return "未達到"
+    upper = "上界未知" if bracket["upper"] is None else f"{bracket['upper']:.0f}"
+    return f"[{bracket['lower']:.0f}, {upper}]"
+
+
+def _gate_cells(cells: list[dict]) -> str:
+    if not cells:
+        return "—"
+    parts = []
+    for c in cells:
+        sides = []
+        for role in ("faster", "slower"):
+            side = c[role]
+            if side["status"] in ("ok", "few_builds"):
+                text = f"{side['implementation']} ef {side['ef_search']} {side['value']:.0f}（{side['builds']} builds）"
+                sides.append(text if side["status"] == "ok" else f"{text}，{GATE_CELL_STATUS['few_builds']}")
+            else:
+                sides.append(f"{side['implementation']}：{GATE_CELL_STATUS[side['status']]}")
+        verdict = "分開" if c["separated"] else "未分開"
+        parts.append(f"({c['m']}, {c['ef_construction']})：{' vs '.join(sides)} → {verdict}")
+    return "；".join(parts)
 
 
 def markdown(report: dict) -> str:
@@ -535,28 +668,33 @@ def markdown(report: dict) -> str:
 
     if report["variance_ranges"]:
         lines += ["", f"## 主要結論附上的 seed 範圍（013 §3；n = {VARIANCE_N}，各實作在自己的最小達標 ef；median [min, max]）", "",
+                  "排除被標記的 build（010 §2）。其他 n 只有 1 個 seed：它們的讀值以本表作為代理範圍；不同 n，大 n 的 seed 變異可能不同（013 §3）。", "",
                   "| 目標 | (M, efC) | 實作 | ef | builds | Recall@10 | QPS | P50 (µs) | P95 (µs) | 與讀值同一 recall 區間 |",
                   "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
-        for target, entries in report["variance_ranges"].items():
-            for e in entries:
-                def span(summary, scale=1.0, digits=0):
-                    return "—" if summary is None else (f"{summary['median'] / scale:.{digits}f} "
-                                                       f"[{summary['min'] / scale:.{digits}f}, {summary['max'] / scale:.{digits}f}]")
-                lines.append(f"| {target} | ({e['m']}, {e['ef_construction']}) | {e['implementation']} | {e['ef_search']} | "
-                             f"{e['builds']} | {span(e['recall10'], digits=4)} | {span(e['qps'])} | "
-                             f"{span(e['p50_ns'], 1e3, 1)} | {span(e['p95_ns'], 1e3, 1)} | "
-                             f"{'是' if e['same_region'] else '否（最大 ef 仍未達到，013 §3 fallback）'} |")
+        lines += _variance_rows(report["variance_ranges"])
+        differing = {target: [e for e, other in zip(entries, report["variance_ranges_all_builds"][target]) if e != other]
+                     for target, entries in report["variance_ranges"].items()}
+        if any(differing.values()):
+            lines += ["", "### 包含被標記 build 的 seed 範圍（只列出與上表不同者，010 §3）", "",
+                      "| 目標 | (M, efC) | 實作 | ef | builds | Recall@10 | QPS | P50 (µs) | P95 (µs) | 與讀值同一 recall 區間 |",
+                      "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+            keys = {target: {(e["implementation"], e["m"], e["ef_construction"]) for e in entries}
+                    for target, entries in differing.items()}
+            lines += _variance_rows({target: [e for e in entries if (e["implementation"], e["m"], e["ef_construction"])
+                                              in keys[target]]
+                                     for target, entries in report["variance_ranges_all_builds"].items()})
     if report["gate"]:
-        verdicts = {"gap": "有差距", "no_gap": "沒有超過量化誤差的差距", "uncertain": "不確定", "undetermined": "無法判定"}
         lines += ["", f"## Gate 讀值（decision 015；n = {VARIANCE_N}；建議判讀，是否進 Advanced 由使用者決定）", "",
-                  f"差距門檻：{GATE_COMPARED} ÷ rust-hnsw 的 QPS ≥ {GATE_GAP_RATIO:.3f}，而且每個附上的 variance 格點上 seed 範圍分開。", "",
-                  "| 目標 | 主要 | hnswlib ÷ rust-hnsw | variance 格點：seed 範圍分開 | 判讀 |", "| --- | --- | --- | --- | --- |"]
+                  "QPS 範圍：不內插，各 (M, efC) 格點中 recall 第一次達到目標的 ef 是下界、前一個 ef 是上界（015 §1）。"
+                  f"seed 範圍：每個附上的 variance 格點上，較快一方在交點之後最慢的 seed 必須快於較慢一方在交點之前最快的 seed（各至少 {GATE_MIN_BUILDS} 個未標記的 build）。", "",
+                  f"| 目標 | 主要 | rust-hnsw QPS 範圍 | {GATE_COMPARED} QPS 範圍 | variance 格點的 seed 範圍 | 判讀 | 包含被標記 build 的判讀 |",
+                  "| --- | --- | --- | --- | --- | --- | --- |"]
         for target, g in report["gate"].items():
-            cells = "；".join(f"({c['m']}, {c['ef_construction']})：" +
-                             ("是" if c["separated"] else ("否" if c["same_region"] else "不在同一 recall 區間"))
-                             for c in g["cells"]) or "—"
-            lines.append(f"| {target} | {'是' if g['primary'] else ''} | {_fmt(g['ratio'], digits=2)} | {cells} | "
-                         f"{verdicts[g['verdict']]} |")
+            main = g["main"]
+            lines.append(f"| {target} | {'是' if g['primary'] else ''} | {_bracket_cell(main['brackets'][BASELINE])} | "
+                         f"{_bracket_cell(main['brackets'][GATE_COMPARED])} | {_gate_cells(main['cells'])} | "
+                         f"{GATE_VERDICTS[main['verdict']]} | "
+                         f"{GATE_VERDICTS[g['all_builds']['verdict']] + '（與主要判讀不同）' if g['differs'] else '相同'} |")
 
     lines += ["", "## recall 隨 efSearch（010 §6）", "", "| 實作 | n | M | efC | 系統性惡化 | 最大相鄰下降 |",
               "| --- | --- | --- | --- | --- | --- |"]

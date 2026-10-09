@@ -28,6 +28,7 @@ from benchmarks.adapters import FaissHnsw, Hnswlib, RustHnsw
 from benchmarks.interface import prepare_vectors
 
 ADAPTERS = {"rust-hnsw": RustHnsw, "hnswlib": Hnswlib, "faiss-hnsw": FaissHnsw}
+REPO = Path(__file__).resolve().parents[1]
 
 
 def parse_args(argv=None):
@@ -91,9 +92,20 @@ def lock_state() -> dict:
         return {"held_by_ancestor": False, "reason": str(err)}
 
 
+def check_code_state() -> dict:
+    """Gate 證據的取樣比照 formal run（008 §1.6、015 §2）：git 乾淨，binding 晚於 HEAD 與每個 tracked 原始碼檔。"""
+    import rust_hnsw
+
+    environment.check_git_clean(REPO)
+    head, head_time = environment.git_head(REPO)
+    environment.check_binding_fresh(rust_hnsw.rust_hnsw.__file__, head_time, environment.tracked_files(REPO))
+    return {"commit": head}
+
+
 def evidence_conditions(args) -> dict | None:
     """作為 Gate 證據的取樣（--dataset 且祖先持有 heavy lock；009）適用 formal run 的條件（014）：
-    電力條件不符就拒絕；背景 heavy workload 或 load 超過門檻就等待，最多 10 分鐘，仍不成立就拒絕。只驗證工具的取樣不檢查。"""
+    電力條件不符就拒絕；背景 heavy workload 或 load 超過門檻就等待，最多 10 分鐘，仍不成立就拒絕。只驗證工具的取樣不檢查。
+    git 不乾淨或 binding 早於 HEAD / 原始碼時也拒絕（015 §2）。"""
     if not args.dataset or not lock_state()["held_by_ancestor"]:
         return None
     power = environment.power_state()
@@ -101,6 +113,10 @@ def evidence_conditions(args) -> dict | None:
         environment.check_formal_power(power)
     except environment.PreflightError as err:
         raise SystemExit(f"Gate profiling needs the formal power conditions (decision 014): {err}") from None
+    try:
+        code = check_code_state()
+    except environment.PreflightError as err:
+        raise SystemExit(f"Gate profiling needs a clean checkout and a fresh binding (decision 015): {err}") from None
     ok, samples, background = environment.wait_for_load(
         lambda: os.getloadavg()[0], protocol.MAX_LOAD_1MIN, protocol.LOAD_WAIT_S, protocol.LOAD_POLL_S, time.sleep,
         time.monotonic, read_background=lambda: environment.background_processes(
@@ -109,7 +125,7 @@ def evidence_conditions(args) -> dict | None:
         raise SystemExit(f"load or background workload {[b['command'] for b in background]} did not clear "
                          f"within {protocol.LOAD_WAIT_S} s (decision 014)")
     return {"power": {key: power[key] for key in ("power_source", "powermode", "adapter", "adapter_watts", "battery")},
-            "gate_samples": samples}
+            "code": code, "gate_samples": samples}
 
 
 def profile_record(args, dataset_record, recall, conditions=None) -> dict:
