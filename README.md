@@ -114,6 +114,13 @@ uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
 .venv/bin/python -m benchmarks.report results/runs/<run 目錄> [<run 目錄> ...]
 ```
 
+正式 run 的批次（decision 013 §5、014；等機器可用時在 heavy lock 下依序執行，任一 run 不是 complete 就停）：
+
+```bash
+mkdir -p results/batches
+./scripts/formal_launcher.sh results/batches/<名稱>.log <最長等待秒數> [--skip-idle] benchmarks/configs/<formal config>.toml ...
+```
+
 Gate profiling（decision 015：依正式 run 選各實作 Recall@10 ≥ 0.95 的最小 ef，在 heavy lock 下取樣，取樣後核對證據條件；
 計畫寫在 `results/` 下，不讓 repo 變 dirty）：
 

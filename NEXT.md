@@ -1,17 +1,25 @@
 # NEXT
 
-## 目前狀態（2026-10-09 09:30 使用者解除限制並決定 B1 / B2 / B3）
+## 目前狀態（2026-10-10 02:00，使用者暫停重負載）
 
-- 使用者決定（decision 014，協定 `008-v2`）：formal 用自動電力模式 + Apple 原廠 70W AC + heavy lock，背景不得有其他 heavy workload，
-  電池在 run 中持續明顯下降就作廢並停止；index memory 以 phys_footprint 為主、rss 為輔。之後使用者另外允許高效能模式（014 補記）。
-  B3 由使用者修好（`xcode-select` 指向 Command Line Tools）。
-- 已落實到 runner、報告、閒置 load 量測與 Gate profiling，並經過三個角度的審查與修正（014 補記：背景判定改用子 process 期間的累積 CPU 時間、
-  電池以 run 期間最高值為基準、memory 標記改用 task_vm_info 的累計被壓縮量）。
-- 接著依「下一步」第 5 項的執行手冊：閒置 load 量測 → 12 份 formal config → Gate profiling → 正式報告。
+- **使用者指示（2026-10-10 01:50 前後）**：使用者要先用 Mac 跑重要工作，**重負載的工作一律先不跑，等使用者通知**；其他能做的照常做。
+  已停止等待中的 formal launcher（GloVe 5–8 尚未開始，沒有中斷任何 run）。本專案沒有任何程式在跑，也沒有持有 heavy lock。
+- **formal run 進度**（協定 008-v2，高效能電力模式、Apple 70W）：
+  - 閒置 load 量測 `results/idle_load/20261009T080239Z.json`：`ok`（p95 + 1.0 = 3.35 ≤ 4.0，沒有重工作）。之後的批次以 `--skip-idle` 沿用。
+  - GloVe 1–4 complete：`20261009T080239Z-formal`、`20261009T091611Z-formal`、`20261009T101347Z-formal`、`20261009T105616Z-formal`
+    （第 1 份有 2 個子 process 標記 `background`：其他專案的 python 53% / 72%；依 010 §3 離開主要讀值）。
+  - GloVe 5 **aborted**：`20261009T113943Z-formal`。macOS 的 mediaanalysisd（照片分析）平均約 270% CPU，第 4 個子 process 標記 `background`，
+    之後 load 600 秒沒有降到 4.0 以下 → 依 008 §2 中止。依 013 §5 整份重跑，報告以 `--excluded` 列出這個 run。
+  - 尚未跑：GloVe 5（重跑）–8、文字 1–4、Gate profiling。預估約 3 h + 4–5 h + 1–1.5 h（GloVe 1–4 實際只花 013 估計值的約 56%）。
+  - heavy lock 自 2026-10-09 12:15Z 起由 llm-serving-lab 持有（`batch_formal_a.sh`），本專案沒有碰它。
+- **decision 015（事先登記，在看任何正式效能結果之前）**：Gate 證據的讀法（QPS 範圍 + variance 格點的 seed 範圍）、Gate profiling 的參數與核對、
+  `report.py` 補上 013 §3 的 seed 範圍。初稿經獨立審查，10 個 findings 全部採用。另把批次與等待腳本收進 `scripts/`。
+  **這些 commit 在分支 `prereg-gate`（已 push），尚未併回 main**：併回後要跑完整的 `./scripts/test.sh`（含編譯，屬於重負載），等使用者解除暫停再做。
+  分支沒有改動任何 `MEASUREMENT_PATHS` 的檔案，併回前後的 formal run 可以合併進同一份報告（013 §5）。
 
 ## 目前位置
 
-**Core：除了正式 run 與 Gate profiling（等上面的事項）之外都已完成**：
+**Core：除了正式 run（進行到一半，暫停中）、Gate profiling 與正式報告之外都已完成**：
 
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
   hnswlib / FAISS adapters（007）、benchmark runner（008，含實作後審查）、比較規則（010）、報告腳本。
@@ -81,7 +89,25 @@
 - `16c9c4a feat(datasets): register the formal text workload and its formal configs`
 - `7dd11a5 docs: summarize what needs the user in NEXT`
 - `b73300d feat(benchmarks): apply the user's formal-run conditions and phys_footprint index memory (decision 014)`
-- `fix(benchmarks): sample background CPU during children and harden the formal-run conditions (014 addendum)`（本次）
+- `f077de9 fix(benchmarks): sample background CPU during children and harden the formal-run conditions (014 addendum)`
+- 分支 `prereg-gate`（尚未併回 main）：
+  - `7a8c86a docs: pre-register the Gate evidence reading and Gate profiling (decision 015)`
+  - `1fa384b fix(benchmarks): read the Gate gap with QPS brackets and check every profiling condition (015 review)`
+  - `chore(scripts): add the formal batch and launcher scripts; update NEXT`（本次）
+
+## 最近完成：Gate 證據的事先登記（decision 015，分支 `prereg-gate`）
+
+- 在看任何正式效能結果之前固定：
+  - **差距的判讀**：主要目標 Recall@10 0.95、n = 100,000。各實作的 QPS 範圍以「第一次達標的 ef」與「前一個 ef」夾住真正的交點（不內插）；
+    範圍分開、而且每個登記的 variance 格點上較快一方最慢的 seed 仍快於較慢一方最快的 seed（各 ≥ 3 個未標記的 build），才判為 `gap` / `rust_faster`。
+    兩個資料集的所有組合都事先寫明意義；`within_quantization` 等不代表「很接近 hnswlib」。是否進 Advanced 由使用者決定。
+  - **Gate profiling**：(100k, 16, 200) seed 1，各實作在正式 run 中 Recall@10 ≥ 0.95 的最小 ef（任一未達時三者一起改用 0.90），
+    search 30 秒、build 300 秒；取樣後核對參數、lock、formal 條件、git、量測程式、BUILD_INFO、版本與 recall（`benchmarks/gate_profile.py`）。
+- 初稿（4/3 的比值門檻）經獨立審查：門檻與自己的理由矛盾（梯子有一半是 ×1.5）等 10 個 findings 全部採用，見 015 文末。
+- 以 GloVe 1–4 的真正紀錄乾跑新的報告程式，只檢查結構，沒有看任何效能數字。
+- `scripts/formal_batch.sh`、`scripts/formal_launcher.sh`：原本放在 session 的 scratchpad，收進 repo，並以假的 python 測試流程。
+- 測試：分支上 `test_report.py`、`test_gate_profile.py`、`test_formal_scripts.py`、`test_profile_driver.py` 的相關部分通過；
+  mutation 都被抓到。worktree 沒有 `.venv`，`profile.sh` 的兩個測試在 worktree 內無法執行；完整的 `./scripts/test.sh` 留到併回 main 時跑。
 
 ## 最近完成：gate 工具的審查（008 / 009 / 010 / 013 補記）
 
@@ -184,16 +210,36 @@
      6. 每個資料集全部 config 跑完、而且 B1 已決定之後，才產生正式報告：
         `.venv/bin/python -m benchmarks.report <該資料集全部 run 目錄> --out results/reports/<資料集> [--excluded <失敗的 run>]`。
         報告會拒絕：缺少或重複的 formal config、同一份 config 另外有沒交出的 complete / incomplete run、沒以 --excluded 列出的失敗 run（013 補記）。
-6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall）。
+   - **恢復正式 run 的步驟**（使用者解除暫停之後；log 一律寫在 `results/batches/`，不得寫在 repo 的 tracked 路徑）：
+     1. main 沒有新的 commit 時：`git merge --ff-only prereg-gate`；`./scripts/test.sh` 全部通過（重新編譯 binding）；push main。
+     2. `mkdir -p results/batches && ./scripts/formal_launcher.sh results/batches/glove-2.log 28800 --skip-idle`
+        `benchmarks/configs/glove-formal-5-m48-seed-5-efc100.toml … glove-formal-8-full.toml`（背景執行；LAUNCHED 之後看 log 的 RUN_END / STOP / ALL_DONE）。
+     3. GloVe 的 ALL_DONE 之後：同樣以 `--skip-idle` 跑 `text-formal-1 … 4`。任一 STOP：先看 run.json 的 status_reasons，再整份重跑該 config。
+     4. GloVe 報告：`.venv/bin/python -m benchmarks.report <GloVe 8 個 run> --out results/reports/glove-100-angular --excluded results/runs/20261009T113943Z-formal`
+        （加上之後其他失敗的 run）；文字同理。
+6. **Gate 用的 profiling**（009：真實資料、lock 下、相近 recall；參數與核對見 decision 015 §2）。
+   - 兩個資料集的全部 formal config 完成之後：`gate_profile plan <run 目錄> > results/profiles/gate-<資料集>-plan.sh`、
+     `./tools/with-mac-lock bash results/profiles/gate-<資料集>-plan.sh`、`gate_profile check <run 目錄>`（全部 ok 才作為證據）。
+   - Gate 的判讀（報告的「Gate 讀值」一節）與 profiling 的 top-of-stack 摘要寫進 NEXT，交給使用者決定是否進 Advanced。
    - 工具已補齊（009 補記）：`profile.py --dataset <名稱> --n <n>` 與取樣前寫出的 JSON（git、BUILD_INFO、lock 狀態、Recall@10）。
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
    - 待正式 run 的結果出來後，依相近的 Recall@10 為各實作選 ef，在 heavy lock 下取樣。
+
+## Deferred（進行中）
+
+- 2026-10-10 01:50 前後：使用者要先跑重要工作，暫停本專案所有重負載（formal run、Gate profiling、`./scripts/test.sh` 的編譯），等使用者通知。
 
 ## Deferred（已解除）
 
 - 2026-10-09 01:00 使用者暫停正式、performance-sensitive 的 Mac 實驗（自動電力模式、68W）；09:30 解除，並以 decision 014 固定正式 run 的條件。
 
 ## Blocked / 需要使用者決定
+
+### 目前需要使用者
+
+- **解除重負載的暫停**（2026-10-10）：解除後依「恢復正式 run 的步驟」繼續（併回 `prereg-gate`、`./scripts/test.sh`、GloVe 5–8、文字 1–4、Gate profiling）。
+- **之後**：正式報告與 Gate profiling 完成後，依 decision 015 的讀值決定是否進 Advanced、做哪些假設（最多三個）。
+
 
 ### B1.（已決定，decision 014）index memory 的量測定義：phys_footprint 為主、rss 為輔
 
