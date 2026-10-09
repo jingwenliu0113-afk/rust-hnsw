@@ -6,8 +6,8 @@
 - 主要比較：每個（實作、n）以所有 (M, efC, ef) 點組成 frontier，每個點取跨 seed 的 median（只用原始插入順序）；
   對每個目標 recall，在 median Recall@10 ≥ 目標的點中取 QPS 最高、P50 / P95 最低、index memory 最低。不內插、不外推。
 - 有 hygiene 標記的點不進入主要讀值；若排除與否會改變讀值，兩者都保留（010 §3）。
-- index memory 另列 phys_footprint 的讀值作為輔助欄位：macOS 上已釋放的大型配置仍算在 rss（NEXT.md B1，待使用者決定），
-  主要讀值仍是 008 §8 的 `index_memory_bytes`。
+- index memory 的主要指標是 phys_footprint 的增量（run.json 的 `index_footprint_bytes`）；rss 的增量（`index_memory_bytes`）
+  列為輔助指標（decision 014：macOS 上已釋放的大型配置仍算在 rss）。三個實作用完全相同的測法。
 - smoke 的報告只用來驗證工具本身，不得用於任何結論。
 - 合併多個 run 之前（013 §5）：只接受 complete / incomplete 的 run；同一個 build 不得出現在多個 run；
   各 run 的 hnswlib / faiss 擴充模組、套件版本、`rust_hnsw.BUILD_INFO` 必須相同，commit 不同時實作與量測程式不得有差異。
@@ -24,7 +24,7 @@ import numpy as np
 
 TARGETS = (0.90, 0.95, 0.99)
 # 008 §9 的 hygiene 標記；子 process、build、點三層的標記都合併到點上（010 §3）。
-HYGIENE_FLAGS = ("load", "thermal", "swap", "multithread", "nondeterministic", "power", "memory")
+HYGIENE_FLAGS = ("load", "thermal", "swap", "multithread", "nondeterministic", "power", "memory", "background")
 BASELINE = "rust-hnsw"
 ORDER_NOTE = {
     "faiss-hnsw": "FAISS 的實際插入順序不是 row 順序（007 §5）：打亂 row 只改變 id 與 level 的對應，意義與另外兩者不同，不並列比較。",
@@ -401,8 +401,8 @@ def markdown(report: dict) -> str:
               "- 規則：decision 010（id-based Recall@10、跨 seed median、不內插、不外推；被標記的點不進入主要讀值）。", ""]
 
     lines += ["## Frontier（主要讀值）", "",
-              "index footprint 是輔助欄位（phys_footprint；不含已釋放但仍算在 rss 的 page，見 NEXT.md B1），主要讀值仍是 index memory（rss）。", "",
-              "| 實作 | n | 目標 | QPS | P50 (µs) | P95 (µs) | index memory (MiB) | index footprint (MiB) | 排除標記點是否改變讀值 |",
+              "index memory 以 phys_footprint 的增量為主要指標，index RSS（rss 的增量）為輔助指標（decision 014）。", "",
+              "| 實作 | n | 目標 | QPS | P50 (µs) | P95 (µs) | index memory，phys_footprint (MiB) | index RSS，輔助 (MiB) | 排除標記點是否改變讀值 |",
               "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for impl, per_n in sorted(report["frontier"].items()):
         for n, per_target in sorted(per_n.items(), key=lambda item: int(item[0])):
@@ -410,21 +410,21 @@ def markdown(report: dict) -> str:
                 main = entry["main"]
                 lines.append(f"| {impl} | {n} | {target} | {_reading_cell(main, 'qps', 1, 0)} | "
                              f"{_reading_cell(main, 'p50_ns', 1e3, 1)} | {_reading_cell(main, 'p95_ns', 1e3, 1)} | "
-                             f"{_reading_cell(main, 'index_memory_bytes', 2**20, 1)} | "
-                             f"{_reading_cell(main, 'index_footprint_bytes', 2**20, 1)} | {'是' if entry['differs'] else '否'} |")
+                             f"{_reading_cell(main, 'index_footprint_bytes', 2**20, 1)} | "
+                             f"{_reading_cell(main, 'index_memory_bytes', 2**20, 1)} | {'是' if entry['differs'] else '否'} |")
     differing = [(impl, n, target, entry["all_points"])
                  for impl, per_n in sorted(report["frontier"].items())
                  for n, per_target in sorted(per_n.items(), key=lambda item: int(item[0]))
                  for target, entry in per_target.items() if entry["differs"]]
     if differing:
         lines += ["", "## 包含被標記點的讀值（只列出與主要讀值不同者，010 §3）", "",
-                  "| 實作 | n | 目標 | QPS | P50 (µs) | P95 (µs) | index memory (MiB) | index footprint (MiB) |",
+                  "| 實作 | n | 目標 | QPS | P50 (µs) | P95 (µs) | index memory，phys_footprint (MiB) | index RSS，輔助 (MiB) |",
                   "| --- | --- | --- | --- | --- | --- | --- | --- |"]
         for impl, n, target, reading in differing:
             lines.append(f"| {impl} | {n} | {target} | {_reading_cell(reading, 'qps', 1, 0)} | "
                          f"{_reading_cell(reading, 'p50_ns', 1e3, 1)} | {_reading_cell(reading, 'p95_ns', 1e3, 1)} | "
-                         f"{_reading_cell(reading, 'index_memory_bytes', 2**20, 1)} | "
-                         f"{_reading_cell(reading, 'index_footprint_bytes', 2**20, 1)} |")
+                         f"{_reading_cell(reading, 'index_footprint_bytes', 2**20, 1)} | "
+                         f"{_reading_cell(reading, 'index_memory_bytes', 2**20, 1)} |")
     m, efc = report["aux_scaling_cell"]
     lines += ["", f"## 輔助 scaling 讀值：每個 n 只用 (M, efC) = ({m}, {efc}) 的點（013 §4，不取代主要讀值）", "",
               "主要讀值的 n 之間格點數不同；這裡固定同一格，只用來呈現這個混淆。", "",
@@ -477,15 +477,15 @@ def markdown(report: dict) -> str:
                          f"{q['median']:.0f} | {o['note']} |")
 
     lines += ["", "## scaling（每個 build 計一次；排除被標記的 build；median [min, max]）", "",
-              "| 實作 | n | M | efC | build (s) | peak RSS (MiB) | index memory (MiB) | index footprint (MiB) | builds | 被標記的 build |",
+              "| 實作 | n | M | efC | build (s) | peak RSS (MiB) | index memory，phys_footprint (MiB) | index RSS，輔助 (MiB) | builds | 被標記的 build |",
               "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for s in report["scaling"]:
         def span(summary, scale, digits):
             return "—" if summary is None else (f"{summary['median'] / scale:.{digits}f} "
                                                f"[{summary['min'] / scale:.{digits}f}, {summary['max'] / scale:.{digits}f}]")
         lines.append(f"| {s['implementation']} | {s['n']} | {s['m']} | {s['ef_construction']} | {span(s['build_ns'], 1e9, 3)} | "
-                     f"{span(s['peak_rss_bytes'], 2**20, 1)} | {span(s['index_memory_bytes'], 2**20, 1)} | "
-                     f"{span(s['index_footprint_bytes'], 2**20, 1)} | {s['builds']} | {s['flagged_builds']} |")
+                     f"{span(s['peak_rss_bytes'], 2**20, 1)} | {span(s['index_footprint_bytes'], 2**20, 1)} | "
+                     f"{span(s['index_memory_bytes'], 2**20, 1)} | {s['builds']} | {s['flagged_builds']} |")
 
     if report.get("run_configs"):
         lines += ["", "## 合併的 run", ""]

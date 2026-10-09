@@ -350,3 +350,10 @@ runner 實作完成後，以三個角度審查（是否忠實落實 008 / 010、
 - **逐樣本紀錄**：每個樣本寫下非祖先 process 的 %CPU 合計與前 5 名。`exceeds` 必須先以它們確認沒有漏判的工作，才能作為修訂門檻的依據；
   修訂門檻本身仍須另寫 decision（屬於使用者決定的事項）。
 - 判定順序：`not_idle` 優先於 `exceeds`。
+
+## 補記（2026-10-09）：008-v2
+
+使用者在任何正式結果之前決定了正式 run 的電力條件與 index memory 的主要指標，見 decision 014。重點：
+§1 的前置檢查與重新確認加入電力條件（自動電力模式、Apple 原廠 70W 變壓器、AC）與電池下降的作廢規則；
+§2 的 gate 加入「沒有背景 heavy workload」；§8 的 recall–memory frontier 改以 `index_footprint_bytes`（phys_footprint 增量）為主、
+`index_memory_bytes`（rss 增量）為輔；§9 加入 `background` 標記。協定版本改為 `008-v2`。

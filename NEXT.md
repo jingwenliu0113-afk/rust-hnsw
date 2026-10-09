@@ -1,18 +1,11 @@
 # NEXT
 
-## 待你處理（2026-10-09 整理；回來時一次看完，細節在下方 Deferred 與 B1–B3）
+## 目前狀態（2026-10-09 09:30 使用者解除限制並決定 B1 / B2 / B3）
 
-目前所有不需要你的 Core 工作都已完成；剩下的正式 run 與 Gate profiling 都卡在下面幾項：
-
-1. **解除今晚的限制，並決定 B2（正式 run 的電力條件）**：今晚是自動電力模式、68W 供電，所有正式、performance-sensitive 的實驗都暫停中。
-   建議固定為：高效能模式（powermode 2）、你指定的變壓器瓦數、電池不在充電中；runner 已開始記錄這三項，但尚未當成前置條件。
-2. **B1：index memory 的定義**（必須在看到任何正式結果之前決定）：macOS 上已釋放的大型配置仍算在 rss，
-   Rust 在完整 GloVe 會被多算約一份資料（448 MiB）。建議改用 phys_footprint 的增量；選項與證據見 B1。
-3. **B3（不擋工作）**：系統 Xcode 在 01:05 被更新後，`/usr/bin/git` 與 `cc` 壞掉；我用 `DEVELOPER_DIR` 繞道，沒有動系統設定。
-   要修正需要 sudo（例如 `sudo xcode-select -s /Library/Developer/CommandLineTools`，或修復 Xcode）。
-
-你處理完 1、2 之後，我可以自行依「下一步」第 5 項的執行手冊接著做：閒置 load 量測（約 15 分鐘）→ 12 份 formal config
-（負載下上限約 19 小時，每份 0.3–2.6 小時，lock 拿不到就改天）→ Gate profiling → 正式報告。
+- 使用者決定（decision 014，協定 `008-v2`）：formal 用自動電力模式 + Apple 原廠 70W AC + heavy lock，背景不得有其他 heavy workload，
+  電池在 run 中下降 ≥ 3 個百分點就作廢並停止；index memory 以 phys_footprint 為主、rss 為輔。B3 由使用者修好（`xcode-select` 指向 Command Line Tools）。
+- 已落實到 runner、報告與閒置 load 量測，並測試。
+- 接著依「下一步」第 5 項的執行手冊：閒置 load 量測 → 12 份 formal config → Gate profiling → 正式報告。
 
 ## 目前位置
 
@@ -84,7 +77,8 @@
 - `89b5f09 fix(benchmarks): close gate-tool gaps found in review`
 - `e0529a0 docs: defer the idle-load baseline until the formal power conditions are decided`
 - `16c9c4a feat(datasets): register the formal text workload and its formal configs`
-- `docs: summarize what needs the user in NEXT`（本次）
+- `7dd11a5 docs: summarize what needs the user in NEXT`
+- `feat(benchmarks): apply the user's formal-run conditions and phys_footprint index memory (decision 014)`（本次）
 
 ## 最近完成：gate 工具的審查（008 / 009 / 010 / 013 補記）
 
@@ -174,7 +168,7 @@
      - （已完成）文字 4 份 config 的 commit（與 manifest 同一個 commit）。
      - （Deferred / Blocked）閒置 load 量測、B1、B2、使用者解除今晚的限制。
    - **正式 run 的執行手冊**（使用者解除限制、B1 / B2 決定、閒置 load 量測通過之後；每一步都在 repo root）：
-     1. `export DEVELOPER_DIR=/Library/Developer/CommandLineTools`（B3 未修好之前）。
+     1. 確認電力條件（decision 014）：自動電力模式、Apple 原廠 70W 變壓器、AC；背景沒有其他 heavy workload。
      2. 確認 git 乾淨、文字 4 份 config 已 commit；`./scripts/test.sh`（重新編譯 binding，formal 前置檢查要求 binding 晚於 HEAD）。
      3. 第一次之前：`./tools/with-mac-lock .venv/bin/python -m benchmarks.idle_load`（含 5 分鐘預備期，共約 15 分鐘；008 補記），結果必須是 `ok`。
         `not_idle`：等其他工作結束再量。`exceeds`：先看紀錄中逐樣本的 %CPU 確認沒有漏判，再記到 Blocked 由使用者決定是否修訂門檻。
@@ -189,20 +183,13 @@
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
    - 待正式 run 的結果出來後，依相近的 Recall@10 為各實作選 ef，在 heavy lock 下取樣。
 
-## Deferred（使用者 2026-10-09 約 01:00 指示並更正範圍，等使用者明確解除）
+## Deferred（已解除）
 
-- 今晚 Mac 使用「自動」電力模式（pmset powermode 0）、只有 68W 供電（70W USB-C 變壓器，電池充電中）：
-  **只暫停正式、performance-sensitive 的 Mac 實驗**；其他 heavy 工作（資料準備、embedding、smoke 探測、測試、開發）照常，commit / push 照常。
-- 因此 deferred（不等待，改做其他 Core 工作）：
-  - 所有 formal run（GloVe 與文字的 formal config 會照常寫好並 commit，但不執行）。
-  - lock 下作為 Gate 證據的 profiling。
-- 閒置 load 量測（`benchmarks.idle_load`）也延後到解除限制、B2 決定之後：它的結果用來確認 formal run 的 load 門檻，
-  應該在 formal run 實際採用的電力條件下量（今晚是自動電力模式、68W）；只需約 15 分鐘，不影響其他工作。
-  （2026-10-09 02:46 機器的 load 曾降到約 2.5，但因上述理由沒有量。）
+- 2026-10-09 01:00 使用者暫停正式、performance-sensitive 的 Mac 實驗（自動電力模式、68W）；09:30 解除，並以 decision 014 固定正式 run 的條件。
 
 ## Blocked / 需要使用者決定
 
-### B1. index memory 的量測定義（修改凍結的 008 §8，需要你決定；不擋正式 run）
+### B1.（已決定，decision 014）index memory 的量測定義：phys_footprint 為主、rss 為輔
 
 - **問題**：008 §8 規定 `index_memory_bytes` = build 後的 rss − baseline rss，recall–memory frontier 一律用它。
   macOS 上，釋放的大型配置會以 reusable page 留在 rss 裡（不算 phys_footprint），直到系統有記憶體壓力才回收；正式 run 要求機器閒置，這些 page 最不會被回收。
@@ -221,7 +208,7 @@
   報告已加上 footprint 的輔助欄位（frontier 與 scaling；主要讀值仍是 rss，未改 008 §8），已在 010 補記登記；B1 決定後依決定保留或移除。
 - **另外的觀察（不是量測問題）**：同一份暫時副本讓 Rust build 期間的 peak RSS 多出一份資料（真實的實作特性，照實報告）；可能是 Advanced A 的假設之一，Core 不改。
 
-### B2. 正式 run 的電力條件（新增前置條件屬於修改 008，需要你決定）
+### B2.（已決定，decision 014）正式 run 的電力條件：自動電力模式、原廠 70W AC、電池下降 ≥ 3 點作廢
 
 - 008 的 formal 前置檢查只確認「接的是 AC 電源」（並在執行中標記 `power`）。但電力模式與供電也會改變 CPU 效能：
   2026-10-08 23:37 的 run 紀錄是「高效能」（powermode 2）、電池 92%；2026-10-09 01:00 為「自動」（powermode 0）、68W 變壓器、電池 56% 充電中。
@@ -230,7 +217,7 @@
 - 目前先只**記錄**（不改任何規則）：metadata 另外記下 `pmset -g ac`（變壓器瓦數）與解析後的 powermode。
 - 這一項與 Deferred 一起處理：解除限制時，請一併決定正式 run 要用的電力條件。
 
-### B3. 系統的 Xcode 在 2026-10-09 01:05 被更新後，`/usr/bin/git` 與 `cc` 無法執行（需要你處理系統設定；本專案有繞道，不擋工作）
+### B3.（已解決，使用者處理）系統的 Xcode 在 2026-10-09 01:05 被更新後，`/usr/bin/git` 與 `cc` 無法執行
 
 - `/Applications/Xcode.app` 在 01:05–01:06 被更換（不是本專案做的）。新的 `libxcrun.dylib` 是 arm64、系統的 `xcrun` 需要 arm64e，
   所以經過 xcrun 的 `/usr/bin/git`、`/usr/bin/cc`（cargo 連結也會用到）都報 `unable to load libxcrun`。

@@ -129,3 +129,4 @@ uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
 - [011 資料集：glove-100-angular 與 EmbeddingGemma 2 文字 workload](docs/decisions/011-datasets.md)
 - [012 正式文字 workload 的規模](docs/decisions/012-text-workload-scale.md)
 - [013 正式 run 的格點（formal config）](docs/decisions/013-formal-grid.md)
+- [014 正式 run 的電力條件、背景 workload 與 index memory 指標](docs/decisions/014-formal-run-conditions-and-index-memory.md)

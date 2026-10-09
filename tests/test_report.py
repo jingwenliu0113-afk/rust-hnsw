@@ -88,8 +88,8 @@ def test_latency_and_memory_readings_take_the_minimum():
     assert (reading["index_memory_bytes"]["value"], reading["index_memory_bytes"]["m"]) == (2e8, 8)
 
 
-def test_index_footprint_is_an_auxiliary_reading_next_to_index_memory():
-    # rss 多算了已釋放的 page（NEXT.md B1）：主要讀值仍取 rss，footprint 另列，兩者各自取最小值。
+def test_index_memory_reads_phys_footprint_with_rss_as_supplementary():
+    # decision 014：主要指標是 phys_footprint（rss 會多算已釋放的 page）；rss 另列為輔助指標，兩者各自取最小值。
     a = make_child("rust-hnsw", [make_point(10, 0.95, 500.0)], index_memory=5e8, index_footprint=3e8)
     b = make_child("rust-hnsw", [make_point(10, 0.96, 400.0)], m=8, index_memory=4e8, index_footprint=3.5e8)
     report = build_report([make_record([a, b])])
@@ -98,7 +98,10 @@ def test_index_footprint_is_an_auxiliary_reading_next_to_index_memory():
     assert (reading["index_footprint_bytes"]["value"], reading["index_footprint_bytes"]["m"]) == (3e8, 16)
     assert {s["index_footprint_bytes"]["median"] for s in report["scaling"]} == {3e8, 3.5e8}
     text = markdown(report)
-    assert "index footprint (MiB)" in text and "286.1 @ M=16" in text
+    assert "index memory，phys_footprint (MiB)" in text and "index RSS，輔助 (MiB)" in text
+    frontier_row = next(line for line in text.splitlines() if line.startswith("| rust-hnsw | 1000 | 0.95 |"))
+    cells = [c.strip() for c in frontier_row.split("|")]
+    assert cells[7].startswith("286.1 @ M=16") and cells[8].startswith("381.5 @ M=8")  # 主要欄位在前
 
 
 def test_each_point_uses_the_median_over_seeds_of_the_original_order():
@@ -150,7 +153,7 @@ def test_main_reading_reports_how_many_builds_remain_after_excluding_flagged_one
     assert entry["differs"] is True
 
 
-@pytest.mark.parametrize("flag", ["power", "memory"])
+@pytest.mark.parametrize("flag", ["power", "memory", "background"])
 def test_power_and_memory_flags_are_hygiene_flags(flag):
     child = curve("rust-hnsw", [(10, 0.93, 500.0)], flags=[flag])
     report = build_report([make_record([child])])

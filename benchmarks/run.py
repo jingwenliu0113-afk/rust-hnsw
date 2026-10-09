@@ -100,15 +100,19 @@ def formal_preflight(context: dict) -> dict:
     environment.check_build_info(rust_hnsw.BUILD_INFO)
     head, head_time = environment.git_head(REPO)
     environment.check_binding_fresh(extension_files()["rust_hnsw"], head_time, environment.tracked_files(REPO))
-    environment.check_ac_power(environment.power_state()["power_source"])
+    power = environment.power_state()
+    environment.check_formal_power(power)
     digests = environment.check_dataset_registered(context["dataset"])
-    context.update(owner=owner, head=head, extension_sha256=_extension_digests())
+    battery_start = None if power["battery"] is None else power["battery"]["percent"]
+    context.update(owner=owner, head=head, extension_sha256=_extension_digests(), battery_start=battery_start)
     return {"lock_owner": owner, "head": head, "config": config, "extension_sha256": context["extension_sha256"],
-            "dataset_sha256": digests}
+            "dataset_sha256": digests,
+            "power": {key: power[key] for key in ("power_source", "powermode", "adapter", "adapter_watts", "battery")}}
 
 
 def formal_recheck(context: dict) -> None:
-    """每個子 process 啟動前與 run 結束時重新確認（008 §1）：lock、HEAD、工作目錄、三個擴充模組都沒有變。"""
+    """每個子 process 啟動前與 run 結束時重新確認（008 §1）：lock、HEAD、工作目錄、三個擴充模組都沒有變；
+    電力條件仍成立、電量沒有比 run 開始時明顯下降（014）。不成立時 run 作廢（invalid）並停止。"""
     try:
         _, owner = environment.read_lock_owner()
         if owner != context["owner"]:
@@ -120,9 +124,15 @@ def formal_recheck(context: dict) -> None:
         for name, digest in _extension_digests().items():
             if digest != context["extension_sha256"][name]:
                 raise PreflightError(f"{name} extension module changed during the run")
+        environment.check_formal_power(environment.power_state(), context.get("battery_start"))
     except (OSError, subprocess.CalledProcessError) as err:
         # 例如擴充模組重新安裝期間短暫不存在：視為狀態改變，而不是 runner 的錯誤。
         raise PreflightError(f"formal recheck failed: {err!r}") from err
+
+
+def read_background() -> list[dict]:
+    """背景 heavy workload（014）：自己與祖先 process 以外 %CPU ≥ 50 的 process。子 process 已經結束時才呼叫。"""
+    return environment.background_processes(exclude=environment.ancestor_pids(os.getpid()))
 
 
 @dataclass
@@ -133,6 +143,8 @@ class Hooks:
     formal_preflight: Callable = formal_preflight
     formal_recheck: Callable = formal_recheck
     load_reader: Callable = field(default=lambda: os.getloadavg()[0])
+    # 以 lambda 包住，測試可以替換模組層級的 read_background。
+    background_reader: Callable = field(default=lambda: read_background())
     sleep: Callable = time.sleep
     monotonic: Callable = time.monotonic
     snapshot: Callable = environment.snapshot
@@ -423,17 +435,19 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
                perm, perm_sha, gt, subset, queries, run_dir, child_env) -> dict:
     child_id = f"g{group:03d}-{name}"
     if mode == "formal":
-        ok, samples = environment.wait_for_load(
+        ok, samples, background = environment.wait_for_load(
             hooks.load_reader, protocol.MAX_LOAD_1MIN, protocol.LOAD_WAIT_S, protocol.LOAD_POLL_S,
-            hooks.sleep, hooks.monotonic,
+            hooks.sleep, hooks.monotonic, read_background=hooks.background_reader,
         )
         if not ok:
-            raise RunAborted(f"load average stayed above {protocol.MAX_LOAD_1MIN} for {protocol.LOAD_WAIT_S} s")
+            raise RunAborted(f"load average above {protocol.MAX_LOAD_1MIN} or background heavy workload "
+                             f"{[b['command'] for b in background]} for {protocol.LOAD_WAIT_S} s (008 §2, 014)")
         # 等待 load 期間可能有其他 session 重新編譯：重新確認放在等待之後、啟動子 process 之前。
         hooks.formal_recheck(context)
-        load_gate = {"enforced": True, "ok": True, "samples": samples}
+        load_gate = {"enforced": True, "ok": True, "samples": samples, "background": background}
     else:
-        load_gate = {"enforced": False, "ok": None, "samples": [(0.0, hooks.load_reader())]}
+        load_gate = {"enforced": False, "ok": None, "samples": [(0.0, hooks.load_reader())],
+                     "background": hooks.background_reader()}
 
     child_dir = run_dir / "children" / child_id
     raw_dir = child_dir / "raw"
@@ -479,6 +493,7 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
         raise
     ended = time.time()
     after = hooks.snapshot()
+    background_after = hooks.background_reader()
 
     lines = _read_jsonl(child_dir / "points.jsonl")
     build_params = {**asdict(build), "permutation_sha256": perm_sha}
@@ -500,6 +515,8 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
         flags.append("swap")
     if before["power_source"] != "AC Power" or after["power_source"] != "AC Power":
         flags.append("power")
+    if load_gate["background"] or background_after:
+        flags.append("background")
     cpu = build_record.get("other_thread_cpu")
     if cpu is not None and _exceeds(cpu["other_s"], cpu["process_s"]):
         flags.append("multithread")
@@ -519,6 +536,7 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
         "load_gate": load_gate,
         "before": before,
         "after": after,
+        "background_after": background_after,
         "flags": flags,
         "loaded_libraries": prelude.get("loaded_libraries"),
         "python_loop": prelude.get("python_loop"),

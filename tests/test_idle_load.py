@@ -100,9 +100,22 @@ def test_refuses_to_run_without_the_heavy_lock(monkeypatch):
         idle_load.main([])
 
 
+FORMAL_POWER = {"power_source": "AC Power", "powermode": 0, "adapter_watts": 68,
+                "adapter": {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"},
+                "battery": {"percent": 100, "state": "charged"}}
+
+
+def test_refuses_to_measure_outside_the_formal_power_conditions(monkeypatch):
+    monkeypatch.setattr(environment, "check_lock", lambda: "owner")
+    monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "powermode": 2})
+    with pytest.raises(SystemExit, match="power conditions"):
+        idle_load.main([])
+
+
 def test_main_uses_the_one_minute_load_and_excludes_only_ancestors(tmp_path, monkeypatch):
     me = os.getpid()
     monkeypatch.setattr(environment, "check_lock", lambda: "owner")
+    monkeypatch.setattr(environment, "power_state", lambda: dict(FORMAL_POWER))
     monkeypatch.setattr(environment, "snapshot", lambda: {})
     monkeypatch.setattr(environment, "top_processes", lambda: "")
     monkeypatch.setattr(environment, "machine_metadata", lambda: {})
@@ -122,3 +135,4 @@ def test_main_uses_the_one_minute_load_and_excludes_only_ancestors(tmp_path, mon
     assert record["status"] == "not_idle"
     assert {h.get("pid") for h in record["heavy_processes"]} == {42}
     assert record["samples"][0]["total_pcpu"] == 80.0 and len(record["samples"]) == 61
+    assert record["power"]["powermode"] == 0

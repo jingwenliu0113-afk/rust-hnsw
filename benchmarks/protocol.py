@@ -6,7 +6,8 @@
 
 from benchmarks.metrics import TIE_EPS
 
-PROTOCOL_VERSION = "008-v1"
+# 008-v2：使用者 2026-10-09 的決定（decision 014）：formal 的電力條件、背景 heavy workload 的 gate、index memory 改以 phys_footprint 為主。
+PROTOCOL_VERSION = "008-v2"
 
 # 主要量測的 k；Recall@1 另外以 k = 1 的整批 search 取得（008 §7）。
 K = 10
@@ -43,6 +44,17 @@ MEMORY_ABSOLUTE_BYTES = 1 << 20
 
 LOCK_DIR = "/tmp/ai-portfolio-mac-heavy.lock"
 
+# 014：formal run 的電力條件（使用者決定）：自動電力模式、Apple 原廠 70W 變壓器、接 AC。
+FORMAL_POWERMODE = 0
+FORMAL_ADAPTER = {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"}
+# 電量比 run 開始時低這麼多個百分點以上：「電池持續明顯下降」，run 作廢（invalid）並停止。
+BATTERY_DROP_LIMIT_PCT = 3
+# 014：背景 heavy workload：自己與祖先 process 以外，任一 process 的 %CPU（ps，100 = 一個 core）達到這個值。
+BACKGROUND_PCPU = 50.0
+# 014：index memory 的主要指標是 phys_footprint 的增量；rss 的增量保留為輔助指標。
+INDEX_MEMORY_PRIMARY = "index_footprint_bytes"
+INDEX_MEMORY_SUPPLEMENTARY = "index_memory_bytes"
+
 
 def protocol_record() -> dict:
     return {
@@ -64,6 +76,12 @@ def protocol_record() -> dict:
         "load_poll_s": LOAD_POLL_S,
         "single_thread_tolerance": {"relative": SINGLE_THREAD_RELATIVE, "absolute_s": SINGLE_THREAD_ABSOLUTE_S},
         "memory_tolerance": {"relative": MEMORY_RELATIVE, "absolute_bytes": MEMORY_ABSOLUTE_BYTES},
+        "formal_powermode": FORMAL_POWERMODE,
+        "formal_adapter": dict(FORMAL_ADAPTER),
+        "battery_drop_limit_pct": BATTERY_DROP_LIMIT_PCT,
+        "background_pcpu": BACKGROUND_PCPU,
+        "index_memory_primary": INDEX_MEMORY_PRIMARY,
+        "index_memory_supplementary": INDEX_MEMORY_SUPPLEMENTARY,
         "tie_eps": TIE_EPS,
     }
 

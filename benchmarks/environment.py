@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from benchmarks import datasets
+from benchmarks import datasets, protocol
 from benchmarks.protocol import LOCK_DIR as _LOCK_DIR
 
 LOCK_DIR = Path(_LOCK_DIR)
@@ -277,6 +277,7 @@ def parse_power_source(batt_text: str) -> str:
 
 
 _POWERMODE = re.compile(r"^\s*powermode\s+(\d+)\s*$", re.MULTILINE)
+_ADAPTER_FIELD = re.compile(r"^\s*(Manufacturer|Adapter Name)\s*=\s*(.*?)\s*$", re.MULTILINE)
 _WATTAGE = re.compile(r"Wattage\s*=\s*(\d+)W")
 _BATTERY = re.compile(r"(\d+)%;\s*([^;]+);")
 
@@ -293,6 +294,14 @@ def parse_adapter_watts(ac_text: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def parse_adapter(ac_text: str) -> dict | None:
+    """`pmset -g ac` 的變壓器製造商與名稱；沒接變壓器時為 None。"""
+    fields = dict(_ADAPTER_FIELD.findall(ac_text))
+    if not fields:
+        return None
+    return {"manufacturer": fields.get("Manufacturer"), "name": fields.get("Adapter Name")}
+
+
 def parse_battery(batt_text: str) -> dict | None:
     """`pmset -g batt` 的電量與狀態（例如 charging、charged、discharging）；沒有電池時為 None。"""
     match = _BATTERY.search(batt_text)
@@ -300,10 +309,43 @@ def parse_battery(batt_text: str) -> dict | None:
 
 
 def power_state() -> dict:
-    """電力狀態。powermode、變壓器瓦數與電池狀態只記錄、不檢查：正式 run 的電力條件待使用者決定（NEXT.md B2）。"""
+    """電力狀態；formal run 以 `check_formal_power` 檢查（decision 014）。"""
     pmset, batt, ac = _run("pmset", "-g"), _run("pmset", "-g", "batt"), _run("pmset", "-g", "ac")
     return {"pmset": pmset, "pmset_batt": batt, "pmset_ac": ac, "power_source": parse_power_source(batt),
-            "powermode": parse_powermode(pmset), "adapter_watts": parse_adapter_watts(ac), "battery": parse_battery(batt)}
+            "powermode": parse_powermode(pmset), "adapter_watts": parse_adapter_watts(ac), "adapter": parse_adapter(ac),
+            "battery": parse_battery(batt)}
+
+
+def check_formal_power(state: dict, battery_start: int | None = None) -> None:
+    """decision 014：AC 電源、自動電力模式、Apple 原廠 70W 變壓器；`battery_start` 給定時，電量下降達到門檻就拒絕。"""
+    check_ac_power(state["power_source"])
+    if state["powermode"] != protocol.FORMAL_POWERMODE:
+        raise PreflightError(f"formal runs need pmset powermode {protocol.FORMAL_POWERMODE} (Automatic), "
+                             f"currently {state['powermode']!r}")
+    if state["adapter"] != protocol.FORMAL_ADAPTER:
+        raise PreflightError(f"formal runs need the {protocol.FORMAL_ADAPTER}, currently {state['adapter']!r}")
+    battery = state["battery"]
+    if battery_start is not None and battery is not None \
+            and battery["percent"] <= battery_start - protocol.BATTERY_DROP_LIMIT_PCT:
+        raise PreflightError(f"battery dropped from {battery_start}% to {battery['percent']}% during the run "
+                             f"(limit {protocol.BATTERY_DROP_LIMIT_PCT} points): the run is void")
+
+
+def background_processes(exclude=(), threshold: float = protocol.BACKGROUND_PCPU) -> list[dict]:
+    """decision 014：自己與祖先 process 以外，%CPU ≥ threshold 的 process（ps 的瞬間值，100 = 一個 core）。"""
+    exclude = set(exclude)
+    heavy = []
+    for line in _run("ps", "-Ao", "pid=,pcpu=,comm=").splitlines():
+        fields = line.split(None, 2)
+        if len(fields) != 3:
+            continue
+        try:
+            pid, pcpu = int(fields[0]), float(fields[1])
+        except ValueError:
+            continue
+        if pid not in exclude and pcpu >= threshold:
+            heavy.append({"pid": pid, "pcpu": pcpu, "command": fields[2]})
+    return sorted(heavy, key=lambda h: -h["pcpu"])
 
 
 def check_ac_power(power_source: str) -> None:
@@ -344,18 +386,22 @@ def top_processes(count: int = 15) -> str:
     return "\n".join(_run("ps", "-Ao", "pid,pcpu,rss,comm", "-r").splitlines()[: count + 1])
 
 
-def wait_for_load(read_load, threshold: float, wait_s: float, poll_s: float, sleep, monotonic):
-    """load 超過門檻就等待，最多 `wait_s` 秒（008 §2）。回傳 (是否通過, [(經過秒數, load)])。"""
+def wait_for_load(read_load, threshold: float, wait_s: float, poll_s: float, sleep, monotonic, read_background=None):
+    """load 超過門檻（008 §2）或有背景 heavy workload（014）就等待，最多 `wait_s` 秒。
+
+    回傳 (是否通過, [(經過秒數, load)], 最後一次看到的背景 heavy process)。
+    """
     start = monotonic()
     samples = []
     while True:
         elapsed = monotonic() - start
         load = read_load()
+        background = [] if read_background is None else read_background()
         samples.append((elapsed, load))
-        if load <= threshold:
-            return True, samples
+        if load <= threshold and not background:
+            return True, samples, background
         if elapsed >= wait_s:
-            return False, samples
+            return False, samples, background
         sleep(poll_s)
 
 

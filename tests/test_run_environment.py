@@ -428,15 +428,15 @@ class FakeClock:
 
 def test_load_gate_passes_immediately_when_below_threshold():
     clock = FakeClock()
-    ok, samples = environment.wait_for_load(lambda: 2.0, 4.0, 600, 15, clock.sleep, clock.monotonic)
+    ok, samples, background = environment.wait_for_load(lambda: 2.0, 4.0, 600, 15, clock.sleep, clock.monotonic)
     assert ok
-    assert samples == [(0.0, 2.0)]
+    assert samples == [(0.0, 2.0)] and background == []
 
 
 def test_load_gate_waits_until_load_drops():
     clock = FakeClock()
     loads = iter([6.0, 5.0, 3.5])
-    ok, samples = environment.wait_for_load(lambda: next(loads), 4.0, 600, 15, clock.sleep, clock.monotonic)
+    ok, samples, _ = environment.wait_for_load(lambda: next(loads), 4.0, 600, 15, clock.sleep, clock.monotonic)
     assert ok
     assert [load for _, load in samples] == [6.0, 5.0, 3.5]
     assert clock.now == 30
@@ -444,7 +444,7 @@ def test_load_gate_waits_until_load_drops():
 
 def test_load_gate_gives_up_after_the_wait_limit():
     clock = FakeClock()
-    ok, samples = environment.wait_for_load(lambda: 9.0, 4.0, 600, 15, clock.sleep, clock.monotonic)
+    ok, samples, _ = environment.wait_for_load(lambda: 9.0, 4.0, 600, 15, clock.sleep, clock.monotonic)
     assert not ok
     assert clock.now >= 600
     assert samples[-1][0] >= 600
@@ -457,3 +457,50 @@ def test_machine_metadata_has_core_counts_and_power_state():
     assert {"pmset_ac", "powermode", "adapter_watts", "battery"} <= set(meta)
     assert meta["cpu_brand"]
     assert meta["memory_bytes"] > 0
+
+
+def test_load_gate_also_waits_for_background_workload():
+    clock = FakeClock()
+    seen = iter([[{"pid": 1, "pcpu": 99.0, "command": "x"}], []])
+    ok, samples, background = environment.wait_for_load(lambda: 1.0, 4.0, 600, 15, clock.sleep, clock.monotonic,
+                                                         read_background=lambda: next(seen))
+    assert ok and len(samples) == 2 and background == [] and clock.now == 15
+
+
+# ---- decision 014：formal 的電力條件與背景 heavy workload ----
+
+FORMAL_POWER = {"power_source": "AC Power", "powermode": 0, "adapter_watts": 68,
+                "adapter": {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"},
+                "battery": {"percent": 100, "state": "charged"}}
+
+
+def test_adapter_is_parsed_from_pmset_ac():
+    ac = " Wattage = 68W\n Manufacturer = Apple Inc.\n Adapter Name = 70W USB-C Power Adapter \n"
+    assert environment.parse_adapter(ac) == {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"}
+    assert environment.parse_adapter("No adapter attached.\n") is None
+
+
+def test_formal_power_accepts_the_registered_conditions():
+    environment.check_formal_power(FORMAL_POWER)
+    environment.check_formal_power(FORMAL_POWER, battery_start=100)
+    environment.check_formal_power({**FORMAL_POWER, "battery": {"percent": 98, "state": "charging"}}, battery_start=100)
+    environment.check_formal_power({**FORMAL_POWER, "battery": None}, battery_start=100)  # 沒有電池的機器
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"power_source": "Battery Power"}, "AC power"),
+    ({"powermode": 2}, "powermode"),
+    ({"adapter": {"manufacturer": "Apple Inc.", "name": "140W USB-C Power Adapter"}}, "70W"),
+    ({"adapter": None}, "70W"),
+    ({"battery": {"percent": 97, "state": "discharging"}}, "battery dropped"),
+])
+def test_formal_power_refuses_each_violation(change, message):
+    with pytest.raises(PreflightError, match=message):
+        environment.check_formal_power({**FORMAL_POWER, **change}, battery_start=100)
+
+
+def test_background_processes_exclude_ancestors_and_use_the_threshold(monkeypatch):
+    ps = " 1 99.0 launchd\n 2 50.0 agent-gym python\n 3 49.9 WindowServer\n 4 80.0 self\n bad\n"
+    monkeypatch.setattr(environment, "_run", lambda *args, **kwargs: ps)
+    heavy = environment.background_processes(exclude=[1, 4])
+    assert heavy == [{"pid": 2, "pcpu": 50.0, "command": "agent-gym python"}]

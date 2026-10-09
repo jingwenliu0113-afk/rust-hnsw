@@ -12,6 +12,7 @@
   2. 同一個 command（例如不斷換 pid 的 rustc、同一程式的多個 worker）合計的平均 %CPU ≥ 100；
   3. 同一個 pid 連續 4 個樣本（約 1 分鐘）%CPU ≥ 50。
 - 每個樣本記錄非祖先 process 的 %CPU 合計與前 5 名，exceeds 必須先以它們確認沒有漏判的工作，才能作為修訂門檻的依據。
+- 必須在 formal run 的電力條件下量（decision 014：AC、自動電力模式、Apple 原廠 70W 變壓器），否則拒絕。
 - 只記錄、不修改門檻。超過時依 008 §2 先另寫 decision 修訂門檻，才能跑 formal。
 - 輸出 `results/idle_load/<UTC 時間>.json`（results/ 不進 Git）。
 """
@@ -143,6 +144,12 @@ def main(argv=None) -> int:
         owner = environment.check_lock()
     except environment.PreflightError as err:
         raise SystemExit(f"run the idle-load measurement under ./tools/with-mac-lock: {err}") from None
+    # 基準必須在 formal run 的電力條件下量（decision 014）。
+    power = environment.power_state()
+    try:
+        environment.check_formal_power(power)
+    except environment.PreflightError as err:
+        raise SystemExit(f"the idle-load baseline needs the formal power conditions (decision 014): {err}") from None
     start = environment.snapshot()
     top_start = environment.top_processes()
     settle, loads, processes = measure(
@@ -166,6 +173,7 @@ def main(argv=None) -> int:
         "heavy_processes": heavy,
         "samples": sample_summaries(processes, exclude=ancestors),
         "lock_owner": owner,
+        "power": {key: power[key] for key in ("power_source", "powermode", "adapter", "adapter_watts", "battery")},
         "start": {**start, "top_processes": top_start},
         "end": {**environment.snapshot(), "top_processes": environment.top_processes()},
         "git": dataprep.git_state(),

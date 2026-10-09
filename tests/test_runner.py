@@ -412,6 +412,46 @@ def test_formal_load_gate_aborts_after_waiting(tmp_path):
     assert clock["now"] >= protocol.LOAD_WAIT_S
 
 
+def test_formal_gate_waits_for_background_workload_to_end(tmp_path):
+    # 014：背景有其他 heavy workload 時，即使 load 低於門檻也要等。
+    clock = {"now": 0.0}
+    seen = iter([[{"pid": 42, "pcpu": 99.0, "command": "agent"}], []] + [[]] * 100)
+    hooks = passing_formal_hooks(background_reader=lambda: next(seen), sleep=lambda s: clock.__setitem__("now", clock["now"] + s),
+                                 monotonic=lambda: clock["now"])
+    result = run(stub_config(["exact-stub"]), "formal", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["status"] == "complete"
+    child = result.record["children"][0]
+    assert len(child["load_gate"]["samples"]) == 2 and child["load_gate"]["background"] == []
+    assert clock["now"] == protocol.LOAD_POLL_S
+
+
+def test_formal_gate_aborts_when_background_workload_persists(tmp_path):
+    clock = {"now": 0.0}
+    hooks = passing_formal_hooks(background_reader=lambda: [{"pid": 42, "pcpu": 99.0, "command": "agent"}],
+                                 sleep=lambda s: clock.__setitem__("now", clock["now"] + s), monotonic=lambda: clock["now"])
+    result = run(stub_config(["exact-stub"]), "formal", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["status"] == "aborted"
+    assert "background" in " ".join(result.record["status_reasons"]) and "agent" in " ".join(result.record["status_reasons"])
+    assert result.record["children"] == []
+
+
+def test_background_workload_during_a_child_flags_it(tmp_path):
+    # gate 通過之後才出現的背景 heavy workload：子 process 標記 background，離開主要讀值（010 §3）。
+    seen = iter([[], [{"pid": 42, "pcpu": 80.0, "command": "agent"}]] + [[]] * 100)
+    hooks = passing_formal_hooks(background_reader=lambda: next(seen))
+    result = run(stub_config(["exact-stub"]), "formal", tmp_path, implementations=STUBS, hooks=hooks)
+    child = result.record["children"][0]
+    assert "background" in child["flags"] and child["background_after"][0]["pid"] == 42
+
+
+def test_smoke_records_background_workload_without_waiting(tmp_path):
+    hooks = Hooks(background_reader=lambda: [{"pid": 42, "pcpu": 99.0, "command": "agent"}],
+                  sleep=lambda s: pytest.fail("smoke must not wait"))
+    result = run(stub_config(["exact-stub"]), "smoke", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["status"] == "complete"
+    assert all("background" in c["flags"] for c in result.record["children"])
+
+
 def test_smoke_records_but_does_not_wait_for_load(tmp_path):
     hooks = Hooks(load_reader=lambda: 9.0, sleep=lambda s: pytest.fail("smoke must not wait"))
     result = run(stub_config(["exact-stub"]), "smoke", tmp_path, implementations=STUBS, hooks=hooks)
@@ -699,7 +739,10 @@ def test_unexpected_errors_are_recorded_with_a_traceback_and_reraised(tmp_path):
 
 
 PREFLIGHT_CHECKS = ("check_lock", "check_git_clean", "check_config_committed", "check_venv", "check_versions",
-                    "check_build_info", "check_binding_fresh", "check_ac_power", "check_dataset_registered")
+                    "check_build_info", "check_binding_fresh", "check_formal_power", "check_dataset_registered")
+FORMAL_POWER = {"power_source": "AC Power", "powermode": 0, "adapter_watts": 68,
+                "adapter": {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"},
+                "battery": {"percent": 100, "state": "charged"}}
 
 
 @pytest.fixture
@@ -714,7 +757,7 @@ def passing_environment(monkeypatch):
         monkeypatch.setattr(environment, name, check)
     monkeypatch.setattr(environment, "git_head", lambda repo: ("abc", 0))
     monkeypatch.setattr(environment, "tracked_files", lambda repo: [])
-    monkeypatch.setattr(environment, "power_state", lambda: {"power_source": "AC Power"})
+    monkeypatch.setattr(environment, "power_state", lambda: dict(FORMAL_POWER))
     monkeypatch.setattr(environment, "read_lock_owner", lambda: (1, "pid=1\n"))
     files = {"rust_hnsw": "a", "hnswlib": "b", "faiss": "c"}
     digests = {"a": "1", "b": "2", "c": "3"}
@@ -729,9 +772,12 @@ def preflight_context():
 
 def test_formal_preflight_runs_every_check(passing_environment):
     called, _ = passing_environment
-    checks = run_module.formal_preflight(preflight_context())
+    context = preflight_context()
+    checks = run_module.formal_preflight(context)
     assert sorted(called) == sorted(PREFLIGHT_CHECKS)
     assert checks["extension_sha256"] == {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"}
+    # 014：電力條件寫進 formal_checks，run 開始時的電量供之後的重新確認比較。
+    assert checks["power"]["powermode"] == 0 and context["battery_start"] == 100
 
 
 @pytest.mark.parametrize("name", PREFLIGHT_CHECKS)
@@ -745,7 +791,8 @@ def test_each_preflight_check_can_refuse(passing_environment, monkeypatch, name)
 
 
 def recheck_context():
-    return {"owner": "pid=1\n", "head": "abc", "extension_sha256": {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"}}
+    return {"owner": "pid=1\n", "head": "abc", "extension_sha256": {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"},
+            "battery_start": 100}
 
 
 def test_formal_recheck_passes_when_nothing_changed(passing_environment):
@@ -754,7 +801,8 @@ def test_formal_recheck_passes_when_nothing_changed(passing_environment):
 
 @pytest.mark.parametrize(
     ("change", "message"),
-    [("owner", "owner"), ("head", "HEAD"), ("dirty", "dirty"), ("faiss", "faiss"), ("missing", "FileNotFoundError")],
+    [("owner", "owner"), ("head", "HEAD"), ("dirty", "dirty"), ("faiss", "faiss"), ("missing", "FileNotFoundError"),
+     ("power", "battery")],
 )
 def test_formal_recheck_detects_each_change(passing_environment, monkeypatch, change, message):
     _, digests = passing_environment
@@ -768,6 +816,10 @@ def test_formal_recheck_detects_each_change(passing_environment, monkeypatch, ch
         monkeypatch.setattr(environment, "check_git_clean", dirty)
     elif change == "faiss":
         digests["c"] = "changed"
+    elif change == "power":
+        def drained(state, battery_start):
+            raise PreflightError(f"battery dropped from {battery_start}%")
+        monkeypatch.setattr(environment, "check_formal_power", drained)
     else:
         def missing(path):
             raise FileNotFoundError(path)

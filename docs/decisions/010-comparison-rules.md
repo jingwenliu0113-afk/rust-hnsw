@@ -98,3 +98,9 @@ EXPERIMENT_RULES 要求 same recall region、多次重跑、報告 variance。
   原因：macOS 上已釋放的大型配置仍算在 rss（reusable page），Rust 在大 n 時的 `index_memory_bytes` 會被多算約一份資料（NEXT.md B1）。
 - 主要讀值不變：仍依 008 §8 / 本文件第 2 點使用 `index_memory_bytes`。是否改用 footprint 由使用者決定（B1），必須在看到任何正式結果之前決定；
   B1 決定之前，不產生、不查看任何 formal 報告（formal run 可以先跑）。決定之後依決定保留或移除這個輔助欄位。
+
+## 補記（2026-10-09）：B1 已由使用者決定
+
+- 上一則補記的 footprint 輔助讀值改為**主要讀值**：recall–memory frontier（第 2 點）與 scaling（第 5 點）的 index memory 以
+  `index_footprint_bytes`（phys_footprint 增量）為準，`index_memory_bytes`（rss 增量）改為輔助讀值（decision 014）。
+- 第 3 點的 hygiene 標記清單加入 `background`（014：子 process 期間有背景 heavy workload）。
