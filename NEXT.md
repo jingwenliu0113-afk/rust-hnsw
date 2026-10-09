@@ -44,7 +44,7 @@
 - **`simplewiki-embeddinggemma2-100k` 已登記**（012 補記）：前 1,000 個 query 與 pilot 逐位元相同；correctness smoke 通過（ef 192 約 0.993）。
   文字 4 份 formal config 已 commit（timeout 依 013 §6 檢查後不需上調）。**12 份 formal config 全部已 commit。**
 
-尚未進 Advanced（Gate 條件都還沒有資料可判斷），沒有做任何 Optional。
+尚未進 Advanced（Gate 的讀法已在 decision 015 事先登記，但還沒有正式結果可判斷），沒有做任何 Optional。
 
 ## 工作方式（使用者 2026-10-08 指示）
 
@@ -195,7 +195,7 @@
      - （已完成，013 補記）`report.py` 的四項檢查：拒絕跨 run 重複的 build、拒絕 aborted / invalid / error 的 run（以 `--excluded` 列出）、
        合併前的版本一致檢查、輔助的 (16, 200)-only scaling 讀值。
      - （已完成）文字 4 份 config 的 commit（與 manifest 同一個 commit）。
-     - （Deferred / Blocked）閒置 load 量測、B1、B2、使用者解除今晚的限制。
+     - （已完成）閒置 load 量測（`ok`）、B1、B2、使用者解除 10-09 晚上的限制。
    - **正式 run 的執行手冊**（使用者解除限制、B1 / B2 決定、閒置 load 量測通過之後；每一步都在 repo root）：
      1. 確認電力條件（decision 014 與補記）：自動或高效能電力模式（一份報告只用一種）、Apple 原廠 70W 變壓器、AC；背景沒有其他 heavy workload。
      2. 確認 git 乾淨、文字 4 份 config 已 commit；`./scripts/test.sh`（重新編譯 binding，formal 前置檢查要求 binding 晚於 HEAD）。
@@ -283,7 +283,8 @@
 - **機器負載**：本 session 多次觀察到其他 Project 在不取 lock 的情況下跑 CPU 重工作（text-to-sql、agent-gym 各數個 100% CPU 的 process），
   1 分鐘 load 約 8.4；incident-investigator 也長時間持有 heavy lock（process 存活，不是 stale lock）。
   正式 run 會被 008 §2 的 load 門檻擋下（等待最多 10 分鐘後中止），這是預期行為；本專案沒有碰它們。
-- 至今沒有跑任何正式 benchmark，也沒有取用 Mac heavy lock 或遠端機器。smoke 輸出多半標記 `load`（因為上述負載），只用來驗證 runner 與 correctness。
+- 正式 run 自 2026-10-09 起在 Mac heavy lock 下進行（見「目前狀態」）；沒有使用遠端機器。之前的 smoke 輸出多半標記 `load`（因為上述負載），只用來驗證 runner 與 correctness。
+- macOS 自己的背景工作（mediaanalysisd 的照片分析，約 270% CPU）也會觸發 load gate 而中止 formal run；關掉它屬於系統設定，本專案不動，遇到時照 013 §5 整份重跑。
 - 本 Project 沒有使用 Docker。
 - 文字 embedding 在獨立的 `.venv-embed`（torch 2.14.1、transformers 5.19.0、sentence-transformers 6.1.0）產生，與 benchmark 用的 `.venv` 分開；
   模型以匿名方式從 Hugging Face 下載（不使用任何 token），快取在 `~/.cache/huggingface`。
