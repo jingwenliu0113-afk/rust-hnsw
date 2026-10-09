@@ -44,13 +44,21 @@ MEMORY_ABSOLUTE_BYTES = 1 << 20
 
 LOCK_DIR = "/tmp/ai-portfolio-mac-heavy.lock"
 
-# 014：formal run 的電力條件（使用者決定）：自動電力模式、Apple 原廠 70W 變壓器、接 AC。
-FORMAL_POWERMODE = 0
+# 014：formal run 的電力條件（使用者決定）：自動（0）或高效能（2）電力模式、Apple 原廠 70W 變壓器、接 AC。
+# 同一個 run 內電力模式不得改變；報告不合併不同電力模式的 run（014 補記）。
+FORMAL_POWERMODES = (0, 2)
 FORMAL_ADAPTER = {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"}
-# 電量比 run 開始時低這麼多個百分點以上：「電池持續明顯下降」，run 作廢（invalid）並停止。
+# 電量比 run 期間看到的最高電量低這麼多個百分點以上：「電池持續明顯下降」，run 作廢（invalid）並停止（014 補記）。
 BATTERY_DROP_LIMIT_PCT = 3
-# 014：背景 heavy workload：自己與祖先 process 以外，任一 process 的 %CPU（ps，100 = 一個 core）達到這個值。
+# 014：背景 heavy workload（自己、祖先與受測子 process 以外；%CPU 以 100 = 一個 core）：
+# - gate：子 process 啟動前，ps 的瞬間 %CPU ≥ BACKGROUND_PCPU 就等待（只會延後啟動）；
+# - 子 process 期間：每 BACKGROUND_POLL_S 秒讀一次累積 CPU 時間，以區間平均判定（014 補記），任一成立就標記 background：
+#   同一 pid 整段平均 ≥ BACKGROUND_PCPU、同一 command 合計整段平均 ≥ BACKGROUND_COMMAND_PCPU、
+#   同一 pid 連續 BACKGROUND_SUSTAINED_INTERVALS 個區間平均 ≥ BACKGROUND_PCPU。
 BACKGROUND_PCPU = 50.0
+BACKGROUND_COMMAND_PCPU = 100.0
+BACKGROUND_SUSTAINED_INTERVALS = 4
+BACKGROUND_POLL_S = 15
 # 014：index memory 的主要指標是 phys_footprint 的增量；rss 的增量保留為輔助指標。
 INDEX_MEMORY_PRIMARY = "index_footprint_bytes"
 INDEX_MEMORY_SUPPLEMENTARY = "index_memory_bytes"
@@ -76,10 +84,13 @@ def protocol_record() -> dict:
         "load_poll_s": LOAD_POLL_S,
         "single_thread_tolerance": {"relative": SINGLE_THREAD_RELATIVE, "absolute_s": SINGLE_THREAD_ABSOLUTE_S},
         "memory_tolerance": {"relative": MEMORY_RELATIVE, "absolute_bytes": MEMORY_ABSOLUTE_BYTES},
-        "formal_powermode": FORMAL_POWERMODE,
+        "formal_powermodes": list(FORMAL_POWERMODES),
         "formal_adapter": dict(FORMAL_ADAPTER),
         "battery_drop_limit_pct": BATTERY_DROP_LIMIT_PCT,
         "background_pcpu": BACKGROUND_PCPU,
+        "background_command_pcpu": BACKGROUND_COMMAND_PCPU,
+        "background_sustained_intervals": BACKGROUND_SUSTAINED_INTERVALS,
+        "background_poll_s": BACKGROUND_POLL_S,
         "index_memory_primary": INDEX_MEMORY_PRIMARY,
         "index_memory_supplementary": INDEX_MEMORY_SUPPLEMENTARY,
         "tie_eps": TIE_EPS,
@@ -92,3 +103,8 @@ def exceeds_single_thread_tolerance(other_thread_cpu_s: float, process_cpu_s: fl
 
 def exceeds_memory_tolerance(footprint_delta: int, rss_delta: int) -> bool:
     return footprint_delta - rss_delta > MEMORY_RELATIVE * footprint_delta + MEMORY_ABSOLUTE_BYTES
+
+
+def exceeds_compression_tolerance(compressed_delta: int, footprint_delta: int) -> bool:
+    """build 期間這個 process 累計被壓縮的量超過 2% × footprint 增量 + 1 MiB（014 補記的 memory 標記）。"""
+    return compressed_delta > MEMORY_RELATIVE * max(footprint_delta, 0) + MEMORY_ABSOLUTE_BYTES

@@ -103,8 +103,10 @@ def formal_preflight(context: dict) -> dict:
     power = environment.power_state()
     environment.check_formal_power(power)
     digests = environment.check_dataset_registered(context["dataset"])
-    battery_start = None if power["battery"] is None else power["battery"]["percent"]
-    context.update(owner=owner, head=head, extension_sha256=_extension_digests(), battery_start=battery_start)
+    battery = None if power["battery"] is None else power["battery"]["percent"]
+    # 014 補記：電量以 run 期間看到的最高值為基準；電力模式在 run 內不得改變。
+    context.update(owner=owner, head=head, extension_sha256=_extension_digests(), battery_peak=battery,
+                   powermode=power["powermode"])
     return {"lock_owner": owner, "head": head, "config": config, "extension_sha256": context["extension_sha256"],
             "dataset_sha256": digests,
             "power": {key: power[key] for key in ("power_source", "powermode", "adapter", "adapter_watts", "battery")}}
@@ -124,15 +126,67 @@ def formal_recheck(context: dict) -> None:
         for name, digest in _extension_digests().items():
             if digest != context["extension_sha256"][name]:
                 raise PreflightError(f"{name} extension module changed during the run")
-        environment.check_formal_power(environment.power_state(), context.get("battery_start"))
+        check_power(context, environment.power_state())
     except (OSError, subprocess.CalledProcessError) as err:
         # 例如擴充模組重新安裝期間短暫不存在：視為狀態改變，而不是 runner 的錯誤。
         raise PreflightError(f"formal recheck failed: {err!r}") from err
 
 
+def check_power(context: dict, state: dict) -> None:
+    """更新 run 期間的最高電量，再檢查 014 的電力條件（formal_preflight 寫入 context；測試的假 preflight 沒有時只檢查條件本身）。"""
+    battery = state["battery"]
+    if battery is not None and context.get("battery_peak") is not None:
+        context["battery_peak"] = max(context["battery_peak"], battery["percent"])
+    environment.check_formal_power(state, battery_peak=context.get("battery_peak"), powermode=context.get("powermode"))
+
+
 def read_background() -> list[dict]:
-    """背景 heavy workload（014）：自己與祖先 process 以外 %CPU ≥ 50 的 process。子 process 已經結束時才呼叫。"""
+    """gate 用的背景 heavy workload（014）：自己與祖先 process 以外，ps 瞬間 %CPU ≥ 50 的 process。"""
     return environment.background_processes(exclude=environment.ancestor_pids(os.getpid()))
+
+
+def read_cpu() -> dict:
+    return environment.cpu_table()
+
+
+def read_power() -> dict:
+    return environment.power_state()
+
+
+class _ChildSampler:
+    """子 process 期間每 BACKGROUND_POLL_S 秒讀一次所有 process 的累積 CPU 時間與電力狀態（014 補記）。
+
+    在另一個 thread 上執行（一次 ps 約 20–30 ms CPU）；讀取失敗只記錄，不中斷量測。
+    """
+
+    def __init__(self, hooks: "Hooks"):
+        self.hooks = hooks
+        self.cpu: list[tuple[float, dict]] = []
+        self.power: list[dict] = []
+        self.errors: list[str] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def _take(self) -> None:
+        try:
+            self.cpu.append((time.monotonic(), self.hooks.cpu_reader()))
+            self.power.append(self.hooks.power_reader())
+        except Exception as err:  # noqa: BLE001 - 取樣失敗不得中斷子 process 的量測
+            self.errors.append(repr(err))
+
+    def _loop(self) -> None:
+        while not self._stop.wait(protocol.BACKGROUND_POLL_S):
+            self._take()
+
+    def start(self) -> None:
+        self._take()
+        self._thread.start()
+
+    def stop(self) -> None:
+        """子 process 結束（已回收）之後呼叫：停止 thread，再取最後一次讀數。"""
+        self._stop.set()
+        self._thread.join()
+        self._take()
 
 
 @dataclass
@@ -143,8 +197,10 @@ class Hooks:
     formal_preflight: Callable = formal_preflight
     formal_recheck: Callable = formal_recheck
     load_reader: Callable = field(default=lambda: os.getloadavg()[0])
-    # 以 lambda 包住，測試可以替換模組層級的 read_background。
+    # 以 lambda 包住，測試可以替換模組層級的函式（tests/conftest.py）。
     background_reader: Callable = field(default=lambda: read_background())
+    cpu_reader: Callable = field(default=lambda: read_cpu())
+    power_reader: Callable = field(default=lambda: read_power())
     sleep: Callable = time.sleep
     monotonic: Callable = time.monotonic
     snapshot: Callable = environment.snapshot
@@ -409,8 +465,13 @@ def _child_record(lines: list[dict], build_params: dict) -> tuple[dict, dict]:
         # build 結束時的 load 超過門檻：build time 與記憶體在高負載下量到（008 §9）。
         if built["loadavg_end"][0] > protocol.MAX_LOAD_1MIN:
             flags.append("load")
-        # phys_footprint 的增量明顯大於 rss 的增量：build 期間有 page 被壓縮，rss 低估了 index 記憶體（008 §8）。
-        if protocol.exceeds_memory_tolerance(index_footprint, index_memory):
+        # build 期間這個 process 有 page 被壓縮（記憶體壓力，可能影響計時；014 補記）。
+        # 舊紀錄沒有 task_vm_info 時，退回 008 §8 的「footprint 增量明顯大於 rss 增量」。
+        if "compressed_lifetime_bytes" in after and "compressed_lifetime_bytes" in baseline:
+            compressed = after["compressed_lifetime_bytes"] - baseline["compressed_lifetime_bytes"]
+            if protocol.exceeds_compression_tolerance(compressed, index_footprint):
+                flags.append("memory")
+        elif protocol.exceeds_memory_tolerance(index_footprint, index_memory):
             flags.append("memory")
         build.update(
             build_ns=built["build_ns"],
@@ -475,6 +536,8 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
     started = time.time()
     returncode = None
     interrupted = None
+    sampler = _ChildSampler(hooks)
+    sampler.start()
     try:
         with open(child_dir / "log.txt", "w", encoding="utf-8") as log:
             try:
@@ -489,11 +552,22 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
                 # subprocess.run 已 kill 子 process；照常收集它已完成的點，再把中止往上傳（010 §3）。
                 status, interrupted = "aborted", err
     except BaseException:
+        sampler.stop()
         shutil.rmtree(raw_dir, ignore_errors=True)
         raise
+    sampler.stop()
     ended = time.time()
     after = hooks.snapshot()
-    background_after = hooks.background_reader()
+    ancestors = set(environment.ancestor_pids(os.getpid()))
+    background = environment.background_from_cpu_samples(sampler.cpu, exclude=ancestors, root=os.getpid())
+    power_violation = None
+    if mode == "formal":
+        for state in sampler.power:
+            try:
+                check_power(context, state)
+            except PreflightError as err:
+                power_violation = err
+                break
 
     lines = _read_jsonl(child_dir / "points.jsonl")
     build_params = {**asdict(build), "permutation_sha256": perm_sha}
@@ -515,7 +589,7 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
         flags.append("swap")
     if before["power_source"] != "AC Power" or after["power_source"] != "AC Power":
         flags.append("power")
-    if load_gate["background"] or background_after:
+    if background["heavy"]:
         flags.append("background")
     cpu = build_record.get("other_thread_cpu")
     if cpu is not None and _exceeds(cpu["other_s"], cpu["process_s"]):
@@ -536,7 +610,10 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
         "load_gate": load_gate,
         "before": before,
         "after": after,
-        "background_after": background_after,
+        "background": {**background, "samples": len(sampler.cpu), "sampler_errors": sampler.errors},
+        "power_samples": [{key: state.get(key) for key in ("power_source", "powermode", "adapter_watts", "battery")}
+                          for state in sampler.power],
+        "power_violation": None if power_violation is None else str(power_violation),
         "flags": flags,
         "loaded_libraries": prelude.get("loaded_libraries"),
         "python_loop": prelude.get("python_loop"),
@@ -545,6 +622,9 @@ def _run_child(*, mode, group, build, name, implementations, config, context, ho
         "log": str((child_dir / "log.txt").relative_to(run_dir)),
         "points": points,
     }
+    # 子 process 期間電力條件不符或電量下降（014 補記）：記錄這個子 process 之後，run 作廢（invalid）並停止。
+    if interrupted is None and power_violation is not None:
+        interrupted = power_violation
     return record, interrupted
 
 

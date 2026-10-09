@@ -103,4 +103,4 @@ EXPERIMENT_RULES 要求 same recall region、多次重跑、報告 variance。
 
 - 上一則補記的 footprint 輔助讀值改為**主要讀值**：recall–memory frontier（第 2 點）與 scaling（第 5 點）的 index memory 以
   `index_footprint_bytes`（phys_footprint 增量）為準，`index_memory_bytes`（rss 增量）改為輔助讀值（decision 014）。
-- 第 3 點的 hygiene 標記清單加入 `background`（014：子 process 期間有背景 heavy workload）。
+- 第 3 點的 hygiene 標記清單加入 `background`（014 與補記：子 process 期間，以累積 CPU 時間的區間平均判定有背景 heavy workload）。

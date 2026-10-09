@@ -91,10 +91,32 @@ def lock_state() -> dict:
         return {"held_by_ancestor": False, "reason": str(err)}
 
 
-def profile_record(args, dataset_record, recall) -> dict:
+def evidence_conditions(args) -> dict | None:
+    """作為 Gate 證據的取樣（--dataset 且祖先持有 heavy lock；009）適用 formal run 的條件（014）：
+    電力條件不符就拒絕；背景 heavy workload 或 load 超過門檻就等待，最多 10 分鐘，仍不成立就拒絕。只驗證工具的取樣不檢查。"""
+    if not args.dataset or not lock_state()["held_by_ancestor"]:
+        return None
+    power = environment.power_state()
+    try:
+        environment.check_formal_power(power)
+    except environment.PreflightError as err:
+        raise SystemExit(f"Gate profiling needs the formal power conditions (decision 014): {err}") from None
+    ok, samples, background = environment.wait_for_load(
+        lambda: os.getloadavg()[0], protocol.MAX_LOAD_1MIN, protocol.LOAD_WAIT_S, protocol.LOAD_POLL_S, time.sleep,
+        time.monotonic, read_background=lambda: environment.background_processes(
+            exclude=environment.ancestor_pids(os.getpid())))
+    if not ok:
+        raise SystemExit(f"load or background workload {[b['command'] for b in background]} did not clear "
+                         f"within {protocol.LOAD_WAIT_S} s (decision 014)")
+    return {"power": {key: power[key] for key in ("power_source", "powermode", "adapter", "adapter_watts", "battery")},
+            "gate_samples": samples}
+
+
+def profile_record(args, dataset_record, recall, conditions=None) -> dict:
     import rust_hnsw
 
     return {
+        "evidence_conditions": conditions,
         "args": vars(args),
         "dataset": dataset_record,
         "recall_at_10": recall,
@@ -130,8 +152,9 @@ def main(argv=None):
         return ADAPTERS[args.impl](m=args.m, ef_construction=args.ef_construction, seed=args.seed)
 
     if args.phase == "build":
+        conditions = evidence_conditions(args)
         if args.meta:
-            Path(args.meta).write_text(json.dumps(profile_record(args, dataset_record, None), indent=2) + "\n")
+            Path(args.meta).write_text(json.dumps(profile_record(args, dataset_record, None, conditions), indent=2) + "\n")
         print(f"READY {os.getpid()}", flush=True)
         deadline = time.monotonic() + args.seconds
         while time.monotonic() < deadline:
@@ -144,8 +167,9 @@ def main(argv=None):
         if gt is not None:
             # 不計時；只用來確認取樣時的 recall 區間（009：相近的 Recall@K）。
             recall = metrics.recall_at_k(adapter.search(queries, protocol.K)[0], gt, protocol.K)
+        conditions = evidence_conditions(args)
         if args.meta:
-            Path(args.meta).write_text(json.dumps(profile_record(args, dataset_record, recall), indent=2) + "\n")
+            Path(args.meta).write_text(json.dumps(profile_record(args, dataset_record, recall, conditions), indent=2) + "\n")
         print(f"READY {os.getpid()}", flush=True)
         deadline = time.monotonic() + args.seconds
         while time.monotonic() < deadline:

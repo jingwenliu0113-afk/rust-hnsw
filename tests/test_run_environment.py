@@ -482,21 +482,31 @@ def test_adapter_is_parsed_from_pmset_ac():
 
 def test_formal_power_accepts_the_registered_conditions():
     environment.check_formal_power(FORMAL_POWER)
-    environment.check_formal_power(FORMAL_POWER, battery_start=100)
-    environment.check_formal_power({**FORMAL_POWER, "battery": {"percent": 98, "state": "charging"}}, battery_start=100)
-    environment.check_formal_power({**FORMAL_POWER, "battery": None}, battery_start=100)  # 沒有電池的機器
+    environment.check_formal_power(FORMAL_POWER, battery_peak=100)
+    environment.check_formal_power({**FORMAL_POWER, "battery": {"percent": 98, "state": "charging"}}, battery_peak=100)
+    environment.check_formal_power({**FORMAL_POWER, "battery": None}, battery_peak=100)  # 沒有電池的機器
 
 
 @pytest.mark.parametrize("change, message", [
     ({"power_source": "Battery Power"}, "AC power"),
-    ({"powermode": 2}, "powermode"),
+    ({"powermode": 1}, "powermode"),   # 低耗電模式
+    ({"powermode": None}, "powermode"),  # pmset 沒有 powermode 這一行
     ({"adapter": {"manufacturer": "Apple Inc.", "name": "140W USB-C Power Adapter"}}, "70W"),
     ({"adapter": None}, "70W"),
+    ({"adapter": {"manufacturer": "Other Inc.", "name": "70W USB-C Power Adapter"}}, "70W"),
     ({"battery": {"percent": 97, "state": "discharging"}}, "battery dropped"),
+    ({"battery": {"percent": 97, "state": "charging"}}, "battery dropped"),  # 與充電狀態無關
 ])
 def test_formal_power_refuses_each_violation(change, message):
     with pytest.raises(PreflightError, match=message):
-        environment.check_formal_power({**FORMAL_POWER, **change}, battery_start=100)
+        environment.check_formal_power({**FORMAL_POWER, **change}, battery_peak=100)
+
+
+def test_high_performance_is_allowed_but_must_not_change_during_a_run():
+    environment.check_formal_power({**FORMAL_POWER, "powermode": 2})
+    environment.check_formal_power({**FORMAL_POWER, "powermode": 2}, powermode=2)
+    with pytest.raises(PreflightError, match="changed during the run"):
+        environment.check_formal_power({**FORMAL_POWER, "powermode": 2}, powermode=0)
 
 
 def test_background_processes_exclude_ancestors_and_use_the_threshold(monkeypatch):
@@ -504,3 +514,71 @@ def test_background_processes_exclude_ancestors_and_use_the_threshold(monkeypatc
     monkeypatch.setattr(environment, "_run", lambda *args, **kwargs: ps)
     heavy = environment.background_processes(exclude=[1, 4])
     assert heavy == [{"pid": 2, "pcpu": 50.0, "command": "agent-gym python"}]
+
+
+# ---- 014 補記：子 process 期間以累積 CPU 時間判定背景 heavy workload ----
+
+
+@pytest.mark.parametrize("text, seconds", [("0:00.29", 0.29), ("493:17.83", 29597.83), ("1:02:03.5", 3723.5),
+                                           ("2-01:00:00.0", 176400.0)])
+def test_cputime_is_parsed(text, seconds):
+    assert environment.parse_cputime(text) == pytest.approx(seconds)
+
+
+def test_cpu_table_and_task_vm_info_read_this_machine():
+    table = environment.cpu_table()
+    assert os.getpid() in table and table[os.getpid()][0] == os.getppid()
+    assert os.getpid() in environment.descendants(table, os.getppid())
+    vm = environment.task_vm_info()
+    assert vm["phys_footprint_bytes"] == pytest.approx(environment.phys_footprint_bytes(), rel=0.05)
+    assert {"reusable_bytes", "compressed_bytes", "compressed_lifetime_bytes"} <= set(vm)
+
+
+def cpu_samples(rates_per_interval, poll=15.0):
+    """[(t, table)]：rates_per_interval[i] = {pid: (command, 該區間的 core 數)}；累積 CPU 時間依此遞增。"""
+    t, totals, samples = 0.0, {}, [(0.0, {})]
+    for rates in rates_per_interval:
+        t += poll
+        table = {}
+        for pid, (command, rate) in rates.items():
+            totals[pid] = totals.get(pid, 0.0) + rate * poll
+            table[pid] = (1, totals[pid], command)
+        samples.append((t, table))
+    return samples
+
+
+def test_a_single_spike_does_not_flag_the_child():
+    # 10 個區間中只有 1 個 150%：整段平均 15%，不連續，不算背景 heavy workload（瞬間尖峰的誤標，審查 F1）。
+    rates = [{7: ("Claude Helper (Renderer)", 1.5 if i == 5 else 0.1)} for i in range(10)]
+    assert environment.background_from_cpu_samples(cpu_samples(rates))["heavy"] == []
+
+
+def test_short_children_are_not_flagged_by_one_spike():
+    rates = [{7: ("Codex (Renderer)", 1.5)}, {7: ("Codex (Renderer)", 0.0)}, {7: ("Codex (Renderer)", 0.0)}]
+    assert environment.background_from_cpu_samples(cpu_samples(rates))["heavy"] == []
+
+
+def test_sustained_mid_child_work_is_flagged_even_if_it_stops_before_the_end():
+    rates = [{9: ("worker", 1.0 if 2 <= i < 6 else 0.0)} for i in range(20)]
+    heavy = environment.background_from_cpu_samples(cpu_samples(rates))["heavy"]
+    assert heavy == [{"rule": "sustained", "pid": 9, "command": "worker", "intervals": 4}]
+
+
+def test_a_stream_of_short_processes_is_flagged_by_command():
+    rates = [{100 + i: ("rustc", 1.0)} for i in range(10)]  # 每個區間換一個 pid
+    heavy = environment.background_from_cpu_samples(cpu_samples(rates))["heavy"]
+    assert [(h["rule"], h["command"]) for h in heavy] == [("command_mean", "rustc")]
+
+
+def test_the_runner_its_ancestors_and_the_measured_child_are_excluded():
+    samples = cpu_samples([{1: ("launchd", 1.0), 50: ("runner", 1.0), 60: ("child", 1.0)}] * 4)
+    for t, table in samples[1:]:
+        table[60] = (50, table[60][1], table[60][2])  # 受測子 process 是 runner（pid 50）的子 process
+    result = environment.background_from_cpu_samples(samples, exclude={1, 50}, root=50)
+    assert result["heavy"] == []
+
+
+def test_a_reused_pid_is_treated_as_a_new_process():
+    samples = [(0.0, {5: (1, 1000.0, "old")}), (15.0, {5: (1, 1.5, "new")})]  # 舊的 process 結束，pid 被重用
+    result = environment.background_from_cpu_samples(samples)
+    assert result["heavy"] == [] and result["intervals"][0]["top"][0]["pcpu"] == pytest.approx(10.0)

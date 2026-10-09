@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from benchmarks import protocol
-from benchmarks.environment import phys_footprint_bytes, ps_rss_bytes, ru_maxrss_bytes
+from benchmarks.environment import phys_footprint_bytes, ps_rss_bytes, ru_maxrss_bytes, task_vm_info
 from benchmarks.interface import IncompleteResultsError, check_search_result
 
 MEASURED_LIBRARIES = ("rust_hnsw", "hnswlib", "faiss")
@@ -49,8 +49,12 @@ def _cpu_split(fn):
 
 
 def _memory() -> dict:
-    # phys_footprint 含被壓縮的 page（rss 不含），用來偵測記憶體壓力下 rss 的低估（008 §8）。
-    return {"rss_bytes": ps_rss_bytes(), "ru_maxrss_bytes": ru_maxrss_bytes(), "phys_footprint_bytes": phys_footprint_bytes()}
+    # phys_footprint 是 index memory 的主要指標（014）；rss 為輔助。task_vm_info 的 reusable / compressed 說明兩者的差異，
+    # compressed_lifetime 的增量用於 memory 標記（014 補記）。三個實作在同樣的時點以同一段程式量測。
+    vm = task_vm_info()
+    return {"rss_bytes": ps_rss_bytes(), "ru_maxrss_bytes": ru_maxrss_bytes(), "phys_footprint_bytes": phys_footprint_bytes(),
+            "reusable_bytes": vm["reusable_bytes"], "compressed_bytes": vm["compressed_bytes"],
+            "compressed_lifetime_bytes": vm["compressed_lifetime_bytes"]}
 
 
 def _percentiles(samples) -> dict:

@@ -297,6 +297,29 @@ def test_runs_built_from_different_libraries_are_not_merged(metadata, field):
         build_report([first, second])
 
 
+def test_formal_runs_in_different_power_modes_are_not_merged():
+    auto, high = make_metadata(), make_metadata()
+    auto["formal_checks"] = {"power": {"powermode": 0}}
+    high["formal_checks"] = {"power": {"powermode": 2}}
+    with pytest.raises(ReportError, match="power mode"):
+        build_report([make_record([curve("rust-hnsw", RUST_CURVE, seed=1)], metadata=auto),
+                      make_record([curve("rust-hnsw", RUST_CURVE, seed=2)], metadata=high)])
+
+
+def test_every_memory_table_puts_phys_footprint_before_rss():
+    # 014：主要指標（phys_footprint）在前、rss 在後；被標記點的表與 scaling 表也一樣。
+    flagged = make_child("rust-hnsw", [make_point(10, 0.95, 500.0)], index_memory=5e8, index_footprint=3e8, flags=("load",))
+    clean = make_child("rust-hnsw", [make_point(10, 0.95, 500.0)], n=2000, index_memory=5e8, index_footprint=3e8)
+    report = build_report([make_record([flagged, clean])])
+    lines = markdown(report).splitlines()
+    for header in [line for line in lines if "phys_footprint" in line and line.startswith("|")]:
+        assert header.index("phys_footprint") < header.index("index RSS")
+    flagged_row = next(line for line in lines if line.startswith("| rust-hnsw | 1000 | 0.95 |") and "286.1" in line)
+    assert flagged_row.index("286.1") < flagged_row.index("476.8")
+    scaling_row = next(line for line in lines if line.startswith("| rust-hnsw | 2000 | 16 | 100 |") and "286.1 [" in line)
+    assert scaling_row.index("286.1") < scaling_row.index("476.8")
+
+
 def test_runs_from_different_commits_merge_only_without_code_changes():
     first = make_record([curve("rust-hnsw", RUST_CURVE, seed=1)], metadata=make_metadata(commit="a" * 40))
     second = make_record([curve("rust-hnsw", RUST_CURVE, seed=2)], metadata=make_metadata(commit="b" * 40))

@@ -9,3 +9,6 @@ __pycache__/
 /datasets/
 # benchmark 與 profiling 的原始輸出不進版控（decision 009）
 /results/
+# Claude Code 自動產生的本機檔案：formal run 期間 repo 內不得出現 untracked 檔案（decision 014 補記）。
+/.claude/settings.local.json
+/.claude/worktrees/

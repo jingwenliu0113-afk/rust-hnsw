@@ -79,3 +79,48 @@
 - 主要記憶體讀值與 008 §8 原文不同：報告與 README 的 recall–memory frontier、scaling 以 phys_footprint 為準，rss 為輔助。
 - 新的 hygiene 標記 `background` 加入 010 §3 的清單（離開主要讀值、另外列出）。
 - 電池或電力條件不符而作廢的 run 是 `invalid`，依 013 §5 整份 config 重跑，原本的 run 以 `--excluded` 列出。
+
+## 補記（2026-10-09，第一次 formal run 之前）：使用者允許高效能模式；實作審查的修正
+
+以三個角度（誤判作廢、錯誤放行與忠實度、測試鑑別力）審查本文件的實作，每個 finding 由驗證者重現或反駁。修正如下：
+
+**電力模式（使用者 10:00 前後指示「允許可以在高效能使用」）**
+
+- 允許自動（powermode 0）或高效能（2）；同一個 run 內模式不得改變（重新確認與子 process 期間的取樣都檢查），
+  報告不合併不同電力模式的 formal run，所以每份正式報告都在同一個模式下。低耗電模式（1）或讀不到 powermode 一律拒絕。
+- 審查時本機接 AC 的設定檔是高效能（`pmset -g custom` 的 AC Power 為 2），因此第一批 formal run 預期都在高效能模式。
+
+**電池**
+
+- 基準改為 run 期間看到的**最高電量**（前置檢查、每次重新確認、子 process 期間的每次取樣都更新）；原本只比 run 開始時的電量，
+  「先充到 100 再降到 96」會被放行。目前電量比最高值低 3 點以上就作廢，與是否在充電無關。
+- 子 process 期間每 15 秒取樣一次電力狀態；任一取樣不符時，該子 process 照常記錄（含 `power_violation`），run 記為 `invalid` 並停止。
+
+**背景 heavy workload（§3 的判定改寫）**
+
+- 實測：macOS 的 `ps` %CPU 是約 0.3–0.5 秒尺度的瞬間值；桌面與系統 process 會短暫超過 50%
+  （Claude Helper (Renderer) 最高 107%、Codex (Renderer) 157%、fseventsd 84–93%、syspolicyd 58–87%；WindowServer 最高 49.4%）。
+  §3 原本「子 process 結束後取一次瞬間值」約有 2–5% 的子 process 會被誤標（12 份 config 共 114 個子 process，幾乎必然誤標），
+  而且子 process 期間出現又停止的背景工作完全看不到。§3 原文「桌面程式各自低於 50%」不成立，在此更正。
+- 改為：
+  - **gate**（子 process 啟動前）：維持 ps 瞬間值 ≥ 50% 就等待；它只會延後啟動 15 秒，不會造成誤標。
+  - **子 process 期間**：另一個 thread 每 15 秒讀一次所有 process 的**累積 CPU 時間**（`ps -o time`），子 process 啟動前與結束後各再讀一次；
+    相鄰兩次的差除以經過時間得到每個區間的平均 %CPU。排除 runner 自己、祖先與受測子 process 的整個 process 樹。
+    任一成立就標記 `background`：同一 pid 整段平均 ≥ 50、同一 command 合計整段平均 ≥ 100、同一 pid 連續 4 個區間平均 ≥ 50。
+    整段平均的分母至少是 4 個區間（60 秒），很短的子 process 不會因為一次尖峰被標記。
+  - 每個區間的非排除 %CPU 合計與前 5 名寫進 run.json，供事後審查。在一個 15 秒區間內開始又結束的 process 看不到，由既有的 `load` 標記涵蓋。
+  - 一次 `ps` 約 20–30 ms CPU，在另一個 core 上執行。
+
+**memory 標記**
+
+- 子 process 在 baseline、after_build、end 另外以 `task_info(TASK_VM_INFO)` 記錄 `reusable`、`compressed`、`compressed_lifetime`
+  （三個實作同一段程式；欄位位置以 phys_footprint 與 `proc_pid_rusage` 相同來驗證）。實測釋放 64 MiB 後 `reusable` 正好增加 64 MiB，直接印證 B1 的成因。
+- `memory` 標記改為：build 期間這個 process 的累計被壓縮量 > 2% × footprint 增量 + 1 MiB。原本「footprint 增量比 rss 增量多」的比較，
+  在 reusable page 讓 rss 偏高時會被抵消而漏標；舊紀錄（沒有 task_vm_info）仍用原本的比較。
+
+**其他**
+
+- 閒置 load 量測結束時再檢查一次電力條件（模式不變、電量沒有比開始時低 3 點以上），不符就記為 `invalid_power`，不得寫成 `ok`。
+- 作為 Gate 證據的 profiling（`--dataset` 且祖先持有 heavy lock，009）適用相同的電力條件與背景 gate；只驗證工具的取樣不檢查。
+- formal run 進行中，repo 內不得出現任何新檔案（包含 untracked 與 `.claude/`）：每次重新確認都要求 `git status` 為空。
+  `.gitignore` 加入 Claude Code 會自動產生的 `/.claude/settings.local.json` 與 `/.claude/worktrees/`。

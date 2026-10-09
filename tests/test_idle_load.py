@@ -107,7 +107,9 @@ FORMAL_POWER = {"power_source": "AC Power", "powermode": 0, "adapter_watts": 68,
 
 def test_refuses_to_measure_outside_the_formal_power_conditions(monkeypatch):
     monkeypatch.setattr(environment, "check_lock", lambda: "owner")
-    monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "powermode": 2})
+    monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "powermode": 1})  # 低耗電模式
+    # 檢查失效時不得真的量 15 分鐘：measure 一被呼叫就失敗。
+    monkeypatch.setattr(idle_load, "measure", lambda *a, **k: pytest.fail("must refuse before measuring"))
     with pytest.raises(SystemExit, match="power conditions"):
         idle_load.main([])
 
@@ -135,4 +137,22 @@ def test_main_uses_the_one_minute_load_and_excludes_only_ancestors(tmp_path, mon
     assert record["status"] == "not_idle"
     assert {h.get("pid") for h in record["heavy_processes"]} == {42}
     assert record["samples"][0]["total_pcpu"] == 80.0 and len(record["samples"]) == 61
-    assert record["power"]["powermode"] == 0
+    assert record["power"]["powermode"] == 0 and record["end_power"]["powermode"] == 0
+
+
+@pytest.mark.parametrize("end", [{"power_source": "Battery Power"}, {"powermode": 2},
+                                 {"battery": {"percent": 96, "state": "charging"}}])
+def test_a_power_change_during_the_measurement_is_never_ok(tmp_path, monkeypatch, end):
+    states = iter([dict(FORMAL_POWER), {**FORMAL_POWER, **end}])
+    monkeypatch.setattr(environment, "check_lock", lambda: "owner")
+    monkeypatch.setattr(environment, "power_state", lambda: next(states))
+    for name in ("snapshot", "machine_metadata"):
+        monkeypatch.setattr(environment, name, lambda: {})
+    monkeypatch.setattr(environment, "top_processes", lambda: "")
+    monkeypatch.setattr(environment, "ancestor_pids", lambda pid: [pid])
+    monkeypatch.setattr(idle_load.dataprep, "git_state", lambda: {})
+    monkeypatch.setattr(idle_load, "measure", lambda *a, **k: ([1.0] * 20, [1.0] * 41, [{}] * 61))
+    monkeypatch.setattr(idle_load, "OUTPUT_DIR", tmp_path)
+    idle_load.main([])
+    record = json.loads(next(tmp_path.glob("*.json")).read_text(encoding="utf-8"))
+    assert record["status"] == "invalid_power" and record["power_error"]

@@ -61,3 +61,5 @@ SPEC 的 Gate 要求「profiler 已顯示時間主要花在哪」。Advanced 的
 - `scripts/profile.sh` 原本最多等 600 秒的 READY，逾時會**靜默地**對 READY 之前的階段（資料載入、frozen GT 驗證、build）取樣並以 0 結束。
   完整 GloVe 的 build 單一實作就約 600 秒，所以這條路徑在 Gate 證據的實際使用中走得到。改為沒有上限地等到 READY；
   workload 沒有印出 READY 就結束時，以非 0 結束，絕不取樣。
+- （014 補記）作為 Gate 證據的取樣（`--dataset` 且祖先持有 heavy lock）在印出 READY 之前檢查 formal run 的電力條件，
+  並等待 load 與背景 heavy workload 的 gate（最多 10 分鐘）；結果寫進取樣前的 JSON（`evidence_conditions`）。

@@ -3,8 +3,10 @@
 ## 目前狀態（2026-10-09 09:30 使用者解除限制並決定 B1 / B2 / B3）
 
 - 使用者決定（decision 014，協定 `008-v2`）：formal 用自動電力模式 + Apple 原廠 70W AC + heavy lock，背景不得有其他 heavy workload，
-  電池在 run 中下降 ≥ 3 個百分點就作廢並停止；index memory 以 phys_footprint 為主、rss 為輔。B3 由使用者修好（`xcode-select` 指向 Command Line Tools）。
-- 已落實到 runner、報告與閒置 load 量測，並測試。
+  電池在 run 中持續明顯下降就作廢並停止；index memory 以 phys_footprint 為主、rss 為輔。之後使用者另外允許高效能模式（014 補記）。
+  B3 由使用者修好（`xcode-select` 指向 Command Line Tools）。
+- 已落實到 runner、報告、閒置 load 量測與 Gate profiling，並經過三個角度的審查與修正（014 補記：背景判定改用子 process 期間的累積 CPU 時間、
+  電池以 run 期間最高值為基準、memory 標記改用 task_vm_info 的累計被壓縮量）。
 - 接著依「下一步」第 5 項的執行手冊：閒置 load 量測 → 12 份 formal config → Gate profiling → 正式報告。
 
 ## 目前位置
@@ -78,7 +80,8 @@
 - `e0529a0 docs: defer the idle-load baseline until the formal power conditions are decided`
 - `16c9c4a feat(datasets): register the formal text workload and its formal configs`
 - `7dd11a5 docs: summarize what needs the user in NEXT`
-- `feat(benchmarks): apply the user's formal-run conditions and phys_footprint index memory (decision 014)`（本次）
+- `b73300d feat(benchmarks): apply the user's formal-run conditions and phys_footprint index memory (decision 014)`
+- `fix(benchmarks): sample background CPU during children and harden the formal-run conditions (014 addendum)`（本次）
 
 ## 最近完成：gate 工具的審查（008 / 009 / 010 / 013 補記）
 
@@ -168,10 +171,13 @@
      - （已完成）文字 4 份 config 的 commit（與 manifest 同一個 commit）。
      - （Deferred / Blocked）閒置 load 量測、B1、B2、使用者解除今晚的限制。
    - **正式 run 的執行手冊**（使用者解除限制、B1 / B2 決定、閒置 load 量測通過之後；每一步都在 repo root）：
-     1. 確認電力條件（decision 014）：自動電力模式、Apple 原廠 70W 變壓器、AC；背景沒有其他 heavy workload。
+     1. 確認電力條件（decision 014 與補記）：自動或高效能電力模式（一份報告只用一種）、Apple 原廠 70W 變壓器、AC；背景沒有其他 heavy workload。
      2. 確認 git 乾淨、文字 4 份 config 已 commit；`./scripts/test.sh`（重新編譯 binding，formal 前置檢查要求 binding 晚於 HEAD）。
      3. 第一次之前：`./tools/with-mac-lock .venv/bin/python -m benchmarks.idle_load`（含 5 分鐘預備期，共約 15 分鐘；008 補記），結果必須是 `ok`。
         `not_idle`：等其他工作結束再量。`exceeds`：先看紀錄中逐樣本的 %CPU 確認沒有漏判，再記到 Blocked 由使用者決定是否修訂門檻。
+     **正式 run 進行中不得在 repo 內建立、修改或刪除任何檔案（含 untracked 檔案與 `.claude/`）、不得 commit、不得跑 pytest / 編譯等重工作**：
+     每個子 process 前的重新確認會檢查 HEAD 與 `git status`（變了就 invalid），背景 heavy workload 會讓 gate 等待、或讓子 process 被標記 `background`。
+     其他 Core 工作在 scratchpad 進行；NEXT.md 等文件的更新留到兩個 run 之間再 commit，之後要重新 `./scripts/test.sh` 讓 binding 晚於 HEAD。
      4. 依 013 §5 的建議順序，一次一份：`./tools/with-mac-lock .venv/bin/python -m benchmarks.run benchmarks/configs/<config>.toml --mode formal`
         （GloVe 1 → 8、文字 1 → 4，可交錯）。lock 拿不到（exit 75）就改天再跑，不得刪 lock。
      5. 某份 config 的 run 若是 aborted / invalid / error：整份重跑，原本的 run 之後以 `--excluded` 列出；incomplete 照實保留、不重跑。

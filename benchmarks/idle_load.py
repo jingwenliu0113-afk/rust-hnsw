@@ -160,9 +160,19 @@ def main(argv=None) -> int:
     ancestors = environment.ancestor_pids(os.getpid())
     heavy = heavy_processes(processes, exclude=ancestors)
     summary = summarize(loads)
+    status = verdict(summary, heavy)
+    # 量測結束時電力條件仍要成立（014 補記）：模式不變、電量沒有比開始時低 3 點以上；不符就不得寫成 ok。
+    end_power = environment.power_state()
+    peak = None if power["battery"] is None else power["battery"]["percent"]
+    power_error = None
+    try:
+        environment.check_formal_power(end_power, battery_peak=peak, powermode=power["powermode"])
+    except environment.PreflightError as err:
+        status, power_error = "invalid_power", str(err)
     record = {
         "decision": "docs/decisions/008-benchmark-runner.md §2",
-        "status": verdict(summary, heavy),
+        "status": status,
+        "power_error": power_error,
         "summary": summary,
         "loads": loads,
         "settle_loads": settle,
@@ -174,6 +184,7 @@ def main(argv=None) -> int:
         "samples": sample_summaries(processes, exclude=ancestors),
         "lock_owner": owner,
         "power": {key: power[key] for key in ("power_source", "powermode", "adapter", "adapter_watts", "battery")},
+        "end_power": {key: end_power[key] for key in ("power_source", "powermode", "adapter", "adapter_watts", "battery")},
         "start": {**start, "top_processes": top_start},
         "end": {**environment.snapshot(), "top_processes": environment.top_processes()},
         "git": dataprep.git_state(),

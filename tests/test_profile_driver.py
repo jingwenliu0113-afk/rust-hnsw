@@ -196,3 +196,38 @@ def test_profile_script_never_samples_a_workload_that_did_not_reach_ready():
     finally:
         for path in (REPO / "results" / "profiles").glob(f"{name}.*"):
             path.unlink()
+
+
+EVIDENCE_POWER = {"power_source": "AC Power", "powermode": 2, "adapter_watts": 68,
+                  "adapter": {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"},
+                  "battery": {"percent": 100, "state": "charged"}}
+
+
+def evidence_args(dataset="tiny-npy"):
+    return profile_module.parse_args(["--impl", "rust-hnsw", "--phase", "build", "--seconds", "0.1", "--dataset", dataset,
+                                      "--n", "300", "--m", "8", "--ef-construction", "32", "--seed", "1"])
+
+
+def test_gate_evidence_needs_the_formal_power_conditions(monkeypatch):
+    # 014 補記：--dataset 且持有 heavy lock 的取樣是 Gate 證據，電力條件不符就拒絕。
+    monkeypatch.setattr(profile_module, "lock_state", lambda: {"held_by_ancestor": True, "owner": "x"})
+    monkeypatch.setattr(environment, "power_state", lambda: {**EVIDENCE_POWER, "powermode": 1})
+    with pytest.raises(SystemExit, match="power conditions"):
+        profile_module.evidence_conditions(evidence_args())
+
+
+def test_gate_evidence_waits_for_background_work_and_records_the_conditions(monkeypatch):
+    monkeypatch.setattr(profile_module, "lock_state", lambda: {"held_by_ancestor": True, "owner": "x"})
+    monkeypatch.setattr(environment, "power_state", lambda: dict(EVIDENCE_POWER))
+    seen = iter([[{"pid": 9, "pcpu": 99.0, "command": "agent"}], []])
+    monkeypatch.setattr(environment, "background_processes", lambda exclude: next(seen))
+    monkeypatch.setattr(profile_module.os, "getloadavg", lambda: (1.0, 1.0, 1.0))
+    monkeypatch.setattr(profile_module.time, "sleep", lambda s: None)
+    conditions = profile_module.evidence_conditions(evidence_args())
+    assert conditions["power"]["powermode"] == 2 and len(conditions["gate_samples"]) == 2
+
+
+def test_tool_checks_without_the_lock_are_not_gated(monkeypatch):
+    monkeypatch.setattr(profile_module, "lock_state", lambda: {"held_by_ancestor": False})
+    monkeypatch.setattr(environment, "power_state", lambda: pytest.fail("must not check power without the lock"))
+    assert profile_module.evidence_conditions(evidence_args()) is None

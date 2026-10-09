@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -18,8 +19,11 @@ from benchmarks import datasets, environment, evaluate, protocol
 from benchmarks import run as run_module
 from benchmarks.config import IMPLEMENTATIONS, ConfigError
 from benchmarks.environment import PreflightError
+from benchmarks.environment import check_formal_power as REAL_CHECK_FORMAL_POWER
 from benchmarks.interface import prepare_vectors
 from benchmarks.metrics import recall_at_k, tie_aware_recall_at_k
+# conftest 在每個測試替換這些讀取函式；import 時取得的是真正的函式，供專門的測試使用。
+from benchmarks.run import read_background as REAL_READ_BACKGROUND, read_cpu as REAL_READ_CPU, read_power as REAL_READ_POWER
 from benchmarks.run import Hooks, main, run
 
 REPO = Path(__file__).resolve().parents[1]
@@ -435,21 +439,70 @@ def test_formal_gate_aborts_when_background_workload_persists(tmp_path):
     assert result.record["children"] == []
 
 
-def test_background_workload_during_a_child_flags_it(tmp_path):
-    # gate 通過之後才出現的背景 heavy workload：子 process 標記 background，離開主要讀值（010 §3）。
-    seen = iter([[], [{"pid": 42, "pcpu": 80.0, "command": "agent"}]] + [[]] * 100)
-    hooks = passing_formal_hooks(background_reader=lambda: next(seen))
+def busy_cpu_reader(pid=42, command="agent", rate=1.0):
+    """假的累積 CPU 時間：`pid` 以 `rate` 個 core 持續占用（014 補記的區間平均判定）。"""
+    start = time.monotonic()
+    return lambda: {pid: (1, rate * (time.monotonic() - start), command)}
+
+
+@pytest.fixture
+def fast_sampling(monkeypatch):
+    """假的子 process 不到 1 秒：把取樣間隔縮短，判定的最短視窗（4 個區間）也跟著縮短。"""
+    monkeypatch.setattr(protocol, "BACKGROUND_POLL_S", 0.01)
+
+
+def test_background_workload_during_a_child_flags_it(tmp_path, fast_sampling):
+    # gate 通過之後、子 process 期間持續占用一個 core 的背景工作：標記 background，離開主要讀值（010 §3）。
+    hooks = passing_formal_hooks(cpu_reader=busy_cpu_reader())
     result = run(stub_config(["exact-stub"]), "formal", tmp_path, implementations=STUBS, hooks=hooks)
     child = result.record["children"][0]
-    assert "background" in child["flags"] and child["background_after"][0]["pid"] == 42
+    assert "background" in child["flags"]
+    assert {h["rule"] for h in child["background"]["heavy"]} >= {"pid_mean"}
+    assert child["background"]["samples"] >= 2 and child["background"]["intervals"]
 
 
-def test_smoke_records_background_workload_without_waiting(tmp_path):
-    hooks = Hooks(background_reader=lambda: [{"pid": 42, "pcpu": 99.0, "command": "agent"}],
+def test_an_idle_background_does_not_flag_the_child(tmp_path, fast_sampling):
+    hooks = passing_formal_hooks(cpu_reader=busy_cpu_reader(rate=0.1))  # 只用 10% 的 core
+    result = run(stub_config(["exact-stub"]), "formal", tmp_path, implementations=STUBS, hooks=hooks)
+    assert "background" not in result.record["children"][0]["flags"]
+
+
+def test_cpu_is_sampled_before_the_child_starts_and_after_it_exits(tmp_path):
+    marker = tmp_path / "child-finished"
+    calls = []
+
+    def cpu_reader():
+        calls.append(marker.exists())
+        return {}
+
+    script = f"import pathlib, sys; pathlib.Path({str(marker)!r}).write_text('done'); sys.exit(1)"
+    hooks = Hooks(child_command=lambda spec: [sys.executable, "-c", script], cpu_reader=cpu_reader)
+    run(stub_config(["exact-stub"]), "smoke", tmp_path / "runs", implementations=STUBS, hooks=hooks)
+    assert calls[0] is False and calls[-1] is True
+
+
+def test_smoke_records_background_workload_without_waiting(tmp_path, fast_sampling):
+    hooks = Hooks(background_reader=lambda: [{"pid": 42, "pcpu": 99.0, "command": "agent"}], cpu_reader=busy_cpu_reader(),
                   sleep=lambda s: pytest.fail("smoke must not wait"))
     result = run(stub_config(["exact-stub"]), "smoke", tmp_path, implementations=STUBS, hooks=hooks)
     assert result.record["status"] == "complete"
     assert all("background" in c["flags"] for c in result.record["children"])
+
+
+def test_a_power_violation_during_a_child_voids_and_stops_the_run(tmp_path):
+    # 014 補記：子 process 期間的電力取樣發現電量比最高值低 3 點：記錄這個子 process，run 作廢（invalid）並停止。
+    states = iter([{**FORMAL_POWER, "battery": {"percent": 100, "state": "charged"}},
+                   {**FORMAL_POWER, "battery": {"percent": 97, "state": "discharging"}}] + [dict(FORMAL_POWER)] * 100)
+
+    def preflight(context):
+        context.update(battery_peak=100, powermode=0)
+        return {"checks": "passed (test)"}
+
+    hooks = passing_formal_hooks(formal_preflight=preflight, power_reader=lambda: next(states))
+    result = run(stub_config(["exact-stub"], seeds=(1, 2)), "formal", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["status"] == "invalid"
+    assert "battery dropped" in " ".join(result.record["status_reasons"])
+    assert len(result.record["children"]) == 1 and "battery" in result.record["children"][0]["power_violation"]
 
 
 def test_smoke_records_but_does_not_wait_for_load(tmp_path):
@@ -777,7 +830,7 @@ def test_formal_preflight_runs_every_check(passing_environment):
     assert sorted(called) == sorted(PREFLIGHT_CHECKS)
     assert checks["extension_sha256"] == {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"}
     # 014：電力條件寫進 formal_checks，run 開始時的電量供之後的重新確認比較。
-    assert checks["power"]["powermode"] == 0 and context["battery_start"] == 100
+    assert checks["power"]["powermode"] == 0 and context["battery_peak"] == 100 and context["powermode"] == 0
 
 
 @pytest.mark.parametrize("name", PREFLIGHT_CHECKS)
@@ -792,7 +845,33 @@ def test_each_preflight_check_can_refuse(passing_environment, monkeypatch, name)
 
 def recheck_context():
     return {"owner": "pid=1\n", "head": "abc", "extension_sha256": {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"},
-            "battery_start": 100}
+            "battery_peak": 100, "powermode": 0}
+
+
+def test_formal_recheck_checks_power_against_the_run_peak(passing_environment, monkeypatch):
+    # 真正的 check_formal_power：基準是 run 期間的最高電量，先充到 100 再降到 96 也要作廢；電力模式不得改變。
+    monkeypatch.setattr(environment, "check_formal_power", REAL_CHECK_FORMAL_POWER)
+    context = {**recheck_context(), "battery_peak": 92}
+    for percent in (96, 100):
+        monkeypatch.setattr(environment, "power_state", lambda p=percent: {**FORMAL_POWER, "battery": {"percent": p, "state": "charging"}})
+        run_module.formal_recheck(context)
+    assert context["battery_peak"] == 100
+    monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "battery": {"percent": 97, "state": "charging"}})
+    with pytest.raises(PreflightError, match="battery dropped from 100%"):
+        run_module.formal_recheck(context)
+    monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "powermode": 2})
+    with pytest.raises(PreflightError, match="changed during the run"):
+        run_module.formal_recheck({**recheck_context(), "battery_peak": 100})
+
+
+def test_the_real_readers_exclude_the_runner_and_its_ancestors(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(environment, "background_processes", lambda exclude: seen.setdefault("exclude", set(exclude)) and [])
+    REAL_READ_BACKGROUND()
+    assert os.getpid() in seen["exclude"] and os.getppid() in seen["exclude"]
+    monkeypatch.setattr(environment, "cpu_table", lambda: {"cpu": True})
+    monkeypatch.setattr(environment, "power_state", lambda: {"power": True})
+    assert REAL_READ_CPU() == {"cpu": True} and REAL_READ_POWER() == {"power": True}
 
 
 def test_formal_recheck_passes_when_nothing_changed(passing_environment):
@@ -817,8 +896,8 @@ def test_formal_recheck_detects_each_change(passing_environment, monkeypatch, ch
     elif change == "faiss":
         digests["c"] = "changed"
     elif change == "power":
-        def drained(state, battery_start):
-            raise PreflightError(f"battery dropped from {battery_start}%")
+        def drained(state, battery_peak=None, powermode=None):
+            raise PreflightError(f"battery dropped from {battery_peak}%")
         monkeypatch.setattr(environment, "check_formal_power", drained)
     else:
         def missing(path):

@@ -319,7 +319,9 @@ def _check_mergeable(records: list[dict], labels: list[str], changed_files) -> N
         for field, getter in (("the hnswlib extension", lambda m: m["extension_sha256"]["hnswlib"]),
                               ("the faiss extension", lambda m: m["extension_sha256"]["faiss"]),
                               ("package versions", lambda m: m["versions"]),
-                              ("rust_hnsw.BUILD_INFO", lambda m: m["build_info"])):
+                              ("rust_hnsw.BUILD_INFO", lambda m: m["build_info"]),
+                              # 014 補記：允許自動或高效能電力模式，但一份報告只合併同一個模式的 run。
+                              ("the power mode", lambda m: ((m.get("formal_checks") or {}).get("power") or {}).get("powermode"))):
             if getter(meta) != getter(first):
                 raise ReportError(f"{label} differs from {labels[0]} in {field}")
         commit_a, commit_b = first["git"]["commit"], meta["git"]["commit"]

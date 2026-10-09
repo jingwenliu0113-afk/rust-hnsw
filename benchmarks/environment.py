@@ -239,6 +239,24 @@ def phys_footprint_bytes() -> int:
     return int(buf[9])
 
 
+# task_vm_info（TASK_VM_INFO = 22）以 uint64 為單位的欄位位置；第 1 格是兩個 32 位元欄位（region_count、page_size）。
+_TASK_VM_INFO = 22
+_VM_FIELDS = {"resident_bytes": 2, "reusable_bytes": 10, "compressed_bytes": 15, "compressed_lifetime_bytes": 17,
+              "phys_footprint_bytes": 18}
+
+
+def task_vm_info() -> dict[str, int]:
+    """自己的 task_vm_info（decision 014 補記）：reusable（已釋放、仍算在 rss 的 page）、compressed 與累計被壓縮量。
+    phys_footprint 與 proc_pid_rusage 的值相同，已用來驗證欄位位置。"""
+    libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    libc.mach_task_self.restype = ctypes.c_uint32
+    buf = (ctypes.c_uint64 * 64)()
+    count = ctypes.c_uint32(64 * 2)
+    if libc.task_info(libc.mach_task_self(), _TASK_VM_INFO, ctypes.byref(buf), ctypes.byref(count)) != 0:
+        raise OSError("task_info(TASK_VM_INFO) failed")
+    return {name: int(buf[index]) for name, index in _VM_FIELDS.items()}
+
+
 _LIBPROC = None
 
 
@@ -316,18 +334,20 @@ def power_state() -> dict:
             "battery": parse_battery(batt)}
 
 
-def check_formal_power(state: dict, battery_start: int | None = None) -> None:
-    """decision 014：AC 電源、自動電力模式、Apple 原廠 70W 變壓器；`battery_start` 給定時，電量下降達到門檻就拒絕。"""
+def check_formal_power(state: dict, battery_peak: int | None = None, powermode: int | None = None) -> None:
+    """decision 014 與補記：AC 電源、允許的電力模式（`powermode` 給定時必須與它相同）、Apple 原廠 70W 變壓器；
+    `battery_peak`（run 期間看到的最高電量）給定時，目前電量比它低 BATTERY_DROP_LIMIT_PCT 點以上就拒絕（不論是否在充電）。"""
     check_ac_power(state["power_source"])
-    if state["powermode"] != protocol.FORMAL_POWERMODE:
-        raise PreflightError(f"formal runs need pmset powermode {protocol.FORMAL_POWERMODE} (Automatic), "
-                             f"currently {state['powermode']!r}")
+    if state["powermode"] not in protocol.FORMAL_POWERMODES:
+        raise PreflightError(f"formal runs need pmset powermode in {protocol.FORMAL_POWERMODES}, currently {state['powermode']!r}")
+    if powermode is not None and state["powermode"] != powermode:
+        raise PreflightError(f"pmset powermode changed during the run: {powermode} -> {state['powermode']}")
     if state["adapter"] != protocol.FORMAL_ADAPTER:
         raise PreflightError(f"formal runs need the {protocol.FORMAL_ADAPTER}, currently {state['adapter']!r}")
     battery = state["battery"]
-    if battery_start is not None and battery is not None \
-            and battery["percent"] <= battery_start - protocol.BATTERY_DROP_LIMIT_PCT:
-        raise PreflightError(f"battery dropped from {battery_start}% to {battery['percent']}% during the run "
+    if battery_peak is not None and battery is not None \
+            and battery["percent"] <= battery_peak - protocol.BATTERY_DROP_LIMIT_PCT:
+        raise PreflightError(f"battery dropped from {battery_peak}% to {battery['percent']}% during the run "
                              f"(limit {protocol.BATTERY_DROP_LIMIT_PCT} points): the run is void")
 
 
@@ -384,6 +404,97 @@ def snapshot() -> dict:
 
 def top_processes(count: int = 15) -> str:
     return "\n".join(_run("ps", "-Ao", "pid,pcpu,rss,comm", "-r").splitlines()[: count + 1])
+
+
+def parse_cputime(text: str) -> float:
+    """ps 的累積 CPU 時間（`[[dd-]hh:]mm:ss.ss`；macOS 的分鐘可以超過 60）→ 秒。"""
+    days, _, rest = text.strip().rpartition("-")
+    parts = [float(x) for x in rest.split(":")]
+    seconds = 0.0
+    for part in parts:
+        seconds = seconds * 60 + part
+    return seconds + (int(days) * 86400 if days else 0)
+
+
+def cpu_table() -> dict[int, tuple[int, float, str]]:
+    """所有 process 的 (ppid, 累積 CPU 秒數, command)。"""
+    table = {}
+    for line in _run("ps", "-Ao", "pid=,ppid=,time=,comm=").splitlines():
+        fields = line.split(None, 3)
+        if len(fields) != 4:
+            continue
+        try:
+            table[int(fields[0])] = (int(fields[1]), parse_cputime(fields[2]), fields[3])
+        except ValueError:
+            continue
+    return table
+
+
+def descendants(table: dict, root: int) -> set[int]:
+    """`root` 的所有子孫 pid（依 table 的 ppid）。"""
+    children: dict[int, list[int]] = {}
+    for pid, (ppid, _, _) in table.items():
+        children.setdefault(ppid, []).append(pid)
+    found, stack = set(), [root]
+    while stack:
+        for child in children.get(stack.pop(), []):
+            if child not in found:
+                found.add(child)
+                stack.append(child)
+    return found
+
+
+def background_from_cpu_samples(samples: list[tuple[float, dict]], exclude=(), root: int | None = None) -> dict:
+    """子 process 期間的背景 heavy workload（014 補記）：以相鄰兩次累積 CPU 時間的差除以經過的時間，得到每個區間的平均 %CPU。
+
+    `samples` 為 [(monotonic 秒數, cpu_table())]；排除 `exclude` 與每次讀數中 `root` 的子孫（受測的子 process）。
+    新出現的 pid 從 0 起算；消失的 pid 只算到最後一次讀數；pid 被重複使用（CPU 時間變少或 command 不同）時視為新的 process。
+    回傳 {"heavy": [命中的規則], "intervals": [每個區間的非排除 %CPU 合計與前 5 名]}。
+    """
+    exclude = set(exclude)
+    total_wall = 0.0
+    by_pid: dict[int, float] = {}
+    by_command: dict[str, float] = {}
+    names: dict[int, str] = {}
+    streak: dict[int, int] = {}
+    longest: dict[int, int] = {}
+    intervals = []
+    for (t0, before), (t1, after) in zip(samples, samples[1:]):
+        wall = t1 - t0
+        if wall <= 0:
+            continue
+        total_wall += wall
+        skip = exclude | (descendants(after, root) | descendants(before, root) if root is not None else set())
+        rates = {}
+        for pid, (_, cpu, comm) in after.items():
+            if pid in skip:
+                continue
+            previous = before.get(pid)
+            used = cpu - previous[1] if previous is not None and previous[2] == comm and cpu >= previous[1] else cpu
+            used = min(used, cpu)
+            by_pid[pid] = by_pid.get(pid, 0.0) + used
+            by_command[comm] = by_command.get(comm, 0.0) + used
+            names[pid] = comm
+            rates[pid] = 100.0 * used / wall
+        for pid in set(streak) | set(rates):
+            if rates.get(pid, 0.0) >= protocol.BACKGROUND_PCPU:
+                streak[pid] = streak.get(pid, 0) + 1
+                longest[pid] = max(longest.get(pid, 0), streak[pid])
+            else:
+                streak[pid] = 0
+        top = sorted(((rate, pid) for pid, rate in rates.items()), reverse=True)[:5]
+        intervals.append({"wall_s": wall, "total_pcpu": sum(rates.values()),
+                          "top": [{"pid": pid, "command": names[pid], "pcpu": rate} for rate, pid in top]})
+    heavy = []
+    # 平均的分母至少是 SUSTAINED 個區間：很短的子 process 不會因為一次尖峰就被標記（背景工作要累積到約 1 分鐘的量才算）。
+    window = max(total_wall, protocol.BACKGROUND_SUSTAINED_INTERVALS * protocol.BACKGROUND_POLL_S)
+    heavy += [{"rule": "pid_mean", "pid": pid, "command": names[pid], "mean_pcpu": 100.0 * used / window}
+              for pid, used in by_pid.items() if 100.0 * used / window >= protocol.BACKGROUND_PCPU]
+    heavy += [{"rule": "command_mean", "command": comm, "mean_pcpu": 100.0 * used / window}
+              for comm, used in by_command.items() if 100.0 * used / window >= protocol.BACKGROUND_COMMAND_PCPU]
+    heavy += [{"rule": "sustained", "pid": pid, "command": names[pid], "intervals": run}
+              for pid, run in longest.items() if run >= protocol.BACKGROUND_SUSTAINED_INTERVALS]
+    return {"heavy": heavy, "intervals": intervals}
 
 
 def wait_for_load(read_load, threshold: float, wait_s: float, poll_s: float, sleep, monotonic, read_background=None):
