@@ -318,6 +318,11 @@
   模型偏保守，依規則不上調，4 份的 child_timeout_s 維持附錄的值。格點、ef、seed、shuffle 都沒有改。
 - 同一個 smoke 的 recall 只用來確認 correctness（三個實作都隨 ef 單調上升，ef 192 約 0.993），不回頭影響格點（§「為什麼」）。
 
+## 補記（2026-10-09，GloVe formal config 1–4 完成後、尚未看任何效能結果）：§3 的 seed 範圍落實於 `report.py`
+
+- §3 第 1 點（讀值所在點的 build 數與跨 seed min–max）與第 2 點（variance 格點在各實作最小達標 ef 上的 seed 範圍，含 fallback）原本沒有在報告中輸出，
+  由 decision 015 §3 補上（`variance_ranges`）。variance 格點與目標的對應照 §3 原文，不改任何讀值的定義。
+
 ## 附錄：文字的 formal config（逐字登記）
 
 與 `simplewiki-embeddinggemma2-100k` 的 manifest 同一個 commit 加入 `benchmarks/configs/`，內容必須與以下完全相同（唯一例外：依第 6 點上調的 `child_timeout_s`）。

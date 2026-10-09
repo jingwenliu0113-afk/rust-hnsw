@@ -63,8 +63,8 @@ def curve(impl, values, **kwargs):
 def test_frontier_reads_the_best_point_at_or_above_each_target_without_interpolation():
     report = build_report([make_record([curve("rust-hnsw", RUST_CURVE)])])
     frontier = report["frontier"]["rust-hnsw"]["1000"]
-    assert frontier["0.90"]["main"]["qps"] == {"value": 800.0, "m": 16, "ef_construction": 100, "ef_search": 20,
-                                                "incomplete": False, "builds": 1}
+    assert frontier["0.90"]["main"]["qps"] == {"value": 800.0, "min": 800.0, "max": 800.0, "m": 16,
+                                                "ef_construction": 100, "ef_search": 20, "incomplete": False, "builds": 1}
     assert frontier["0.95"]["main"]["qps"]["value"] == 500.0
     # 0.985 < 0.99：沒有任何點達到，不得以最接近的點代替。
     assert frontier["0.99"]["main"] == {"reached": False}
@@ -75,8 +75,8 @@ def test_frontier_spans_all_m_and_ef_construction():
     other = curve("rust-hnsw", [(10, 0.90, 400.0), (40, 0.951, 600.0)], m=8)
     report = build_report([make_record([curve("rust-hnsw", RUST_CURVE), other])])
     reading = report["frontier"]["rust-hnsw"]["1000"]["0.95"]["main"]
-    assert reading["qps"] == {"value": 600.0, "m": 8, "ef_construction": 100, "ef_search": 40, "incomplete": False,
-                              "builds": 1}
+    assert reading["qps"] == {"value": 600.0, "min": 600.0, "max": 600.0, "m": 8, "ef_construction": 100,
+                              "ef_search": 40, "incomplete": False, "builds": 1}
 
 
 def test_latency_and_memory_readings_take_the_minimum():
@@ -118,6 +118,17 @@ def test_each_point_uses_the_median_over_seeds_of_the_original_order():
     assert aggregate["builds"] == 3
     assert aggregate["recall10"] == {"median": 0.91, "min": 0.89, "max": 0.95, "values": [0.89, 0.91, 0.95]}
     assert aggregate["qps"]["values"] == [100.0, 300.0, 200.0]
+
+
+def test_a_reading_carries_the_seed_range_and_build_count_of_its_point():
+    """013 §3 第 1 點：讀值附上該點本身參與的 build 數與跨 seed min–max；只有一個 build 時表格不列範圍。"""
+    children = [curve("rust-hnsw", [(10, 0.95, q)], seed=s) for s, q in [(1, 100.0), (2, 300.0), (3, 200.0)]]
+    report = build_report([make_record(children)])
+    qps = report["frontier"]["rust-hnsw"]["1000"]["0.90"]["main"]["qps"]
+    assert (qps["value"], qps["min"], qps["max"], qps["builds"]) == (200.0, 100.0, 300.0, 3)
+    assert "| rust-hnsw | 1000 | 0.90 | 200 [100, 300]（3 builds） @ M=16" in markdown(report)
+    single = build_report([make_record([curve("rust-hnsw", RUST_CURVE)])])
+    assert "| rust-hnsw | 1000 | 0.90 | 800 @ M=16" in markdown(single)
 
 
 def test_ratios_need_both_implementations_to_reach_the_target():
@@ -217,6 +228,103 @@ def test_order_variance_uses_the_first_seed_with_its_shuffles_and_is_separate():
     assert order["note"]  # FAISS 的 order variance 意義不同（007 §5）
     (seed,) = report["seed_variance"]
     assert seed["recall10"]["values"] == [0.90, 0.92]
+
+
+# ---- 013 §3：主要結論附上的 seed 範圍；015：Gate 讀值 ----
+
+GLOVE = "glove-100-angular"
+TEXT = "simplewiki-embeddinggemma2-100k"
+
+
+def seeds(impl, values, m=16, efc=200, n=100_000, flagged=()):
+    """每個 seed 一個 build；values = [(seed, [(ef, recall, qps), ...]), ...]。"""
+    return [make_child(impl, [make_point(ef, r, q) for ef, r, q in points], n=n, m=m, efc=efc, seed=s,
+                       flags=("load",) if s in flagged else ())
+            for s, points in values]
+
+
+def test_variance_ranges_use_each_implementations_own_smallest_reaching_ef():
+    rust = seeds("rust-hnsw", [(1, [(64, 0.93, 900.0), (128, 0.96, 500.0)]), (2, [(64, 0.94, 950.0), (128, 0.97, 520.0)])])
+    hnswlib = seeds("hnswlib", [(1, [(64, 0.955, 2000.0), (128, 0.98, 1100.0)]), (2, [(64, 0.951, 2100.0), (128, 0.98, 1200.0)])])
+    ranges = build_report([make_record(rust + hnswlib, dataset=GLOVE)])["variance_ranges"]
+    by_impl = {e["implementation"]: e for e in ranges["0.95"] if (e["m"], e["ef_construction"]) == (16, 200)}
+    assert by_impl["rust-hnsw"]["ef_search"] == 128 and by_impl["hnswlib"]["ef_search"] == 64
+    assert by_impl["rust-hnsw"]["qps"]["min"] == 500.0 and by_impl["rust-hnsw"]["qps"]["max"] == 520.0
+    assert by_impl["rust-hnsw"]["builds"] == 2 and by_impl["rust-hnsw"]["same_region"] is True
+
+
+def test_a_median_recall_equal_to_the_target_reaches_it():
+    rust = seeds("rust-hnsw", [(1, [(64, 0.95, 900.0), (128, 0.97, 500.0)])])
+    (entry,) = build_report([make_record(rust, dataset=TEXT)])["variance_ranges"]["0.95"]
+    assert entry["ef_search"] == 64  # 010 §2：median Recall@10 ≥ 目標
+
+
+def test_variance_ranges_fall_back_to_the_largest_ef_when_the_cell_never_reaches_the_target():
+    rust = seeds("rust-hnsw", [(1, [(64, 0.93, 900.0), (384, 0.97, 300.0)])])
+    ranges = build_report([make_record(rust, dataset=TEXT)])["variance_ranges"]
+    (entry,) = ranges["0.99"]
+    assert (entry["ef_search"], entry["same_region"]) == (384, False)
+    assert "否（最大 ef 仍未達到" in markdown(build_report([make_record(rust, dataset=TEXT)]))
+
+
+def test_variance_cells_follow_013_per_dataset_and_target():
+    cells = [*seeds("rust-hnsw", [(1, [(64, 0.995, 900.0)])]), *seeds("rust-hnsw", [(1, [(64, 0.995, 800.0)])], m=48),
+             *seeds("rust-hnsw", [(1, [(64, 0.995, 700.0)])], m=32)]
+    glove = build_report([make_record(cells, dataset=GLOVE)])["variance_ranges"]
+    assert [(e["m"], e["ef_construction"]) for e in glove["0.95"]] == [(16, 200), (48, 200)]
+    assert [(e["m"], e["ef_construction"]) for e in glove["0.99"]] == [(48, 200)]  # GloVe 0.99 只附 (48, 200)
+    text = build_report([make_record(cells, dataset=TEXT)])["variance_ranges"]
+    assert {t: [(e["m"], e["ef_construction"]) for e in v] for t, v in text.items()} == {
+        "0.90": [(16, 200)], "0.95": [(16, 200)], "0.99": [(16, 200)]}
+    # 其他 n 不是 variance 格點；沒有登記的資料集沒有 seed 範圍。
+    other_n = seeds("rust-hnsw", [(1, [(64, 0.995, 900.0)])], n=300_000)
+    assert build_report([make_record(other_n, dataset=GLOVE)])["variance_ranges"]["0.95"] == []
+    assert build_report([make_record(cells, dataset="d")])["variance_ranges"] == {}
+
+
+def test_variance_ranges_exclude_flagged_builds_like_the_main_reading():
+    rust = seeds("rust-hnsw", [(1, [(64, 0.96, 500.0)]), (2, [(64, 0.96, 9000.0)])], flagged=(2,))
+    (entry,) = [e for e in build_report([make_record(rust, dataset=TEXT)])["variance_ranges"]["0.95"]]
+    assert entry["builds"] == 1 and entry["qps"]["max"] == 500.0
+
+
+def gate_for(rust_qps, hnswlib_qps, rust_recall=0.96, hnswlib_recall=0.96, dataset=TEXT):
+    rust = seeds("rust-hnsw", [(s, [(64, rust_recall, q)]) for s, q in enumerate(rust_qps, start=1)])
+    hnswlib = seeds("hnswlib", [(s, [(64, hnswlib_recall, q)]) for s, q in enumerate(hnswlib_qps, start=1)])
+    return build_report([make_record(rust + hnswlib, dataset=dataset)])["gate"]
+
+
+def test_gate_reports_a_gap_only_beyond_the_ladder_quantization_and_with_separated_seed_ranges():
+    gate = gate_for([100.0, 110.0, 105.0], [150.0, 160.0, 155.0])
+    assert gate["0.95"]["ratio"] == pytest.approx(155.0 / 105.0)
+    assert gate["0.95"]["verdict"] == "gap" and gate["0.95"]["primary"] is True
+    assert gate["0.90"]["primary"] is False
+    assert gate["0.99"]["verdict"] == "undetermined"  # 兩者都沒有達到 0.99
+
+
+@pytest.mark.parametrize("rust_qps, hnswlib_qps, verdict", [
+    ([100.0, 110.0, 105.0], [130.0, 140.0, 135.0], "no_gap"),     # 比值約 1.29 < 4/3：與梯子的量化誤差無法區分
+    ([300.0, 310.0, 305.0], [100.0, 110.0, 105.0], "no_gap"),     # rust 較快
+    ([100.0, 200.0, 105.0], [150.0, 160.0, 155.0], "uncertain"),  # 比值 ≥ 4/3，但 seed 範圍重疊
+])
+def test_gate_verdicts(rust_qps, hnswlib_qps, verdict):
+    assert gate_for(rust_qps, hnswlib_qps)["0.95"]["verdict"] == verdict
+
+
+def test_the_gate_threshold_is_inclusive():
+    assert gate_for([300.0], [400.0])["0.95"]["verdict"] == "gap"
+    assert gate_for([300.0], [399.0])["0.95"]["verdict"] == "no_gap"
+
+
+def test_the_gate_needs_every_attached_cell_to_separate():
+    # GloVe 的 0.95 附 (16, 200) 與 (48, 200)：(48, 200) 只到最大 ef 仍未達到時，不得判為有差距。
+    rust = seeds("rust-hnsw", [(1, [(64, 0.96, 100.0)])]) + seeds("rust-hnsw", [(1, [(64, 0.94, 50.0)])], m=48)
+    hnswlib = seeds("hnswlib", [(1, [(64, 0.96, 200.0)])]) + seeds("hnswlib", [(1, [(64, 0.96, 90.0)])], m=48)
+    gate = build_report([make_record(rust + hnswlib, dataset=GLOVE)])["gate"]["0.95"]
+    assert [(c["m"], c["same_region"], c["separated"]) for c in gate["cells"]] == [(16, True, True), (48, False, False)]
+    assert gate["verdict"] == "uncertain"
+    text = markdown(build_report([make_record(rust + hnswlib, dataset=GLOVE)]))
+    assert "## Gate 讀值" in text and "(48, 200)：不在同一 recall 區間" in text
 
 
 # ---- 010 §5：scaling ----

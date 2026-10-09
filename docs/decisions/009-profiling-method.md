@@ -63,3 +63,7 @@ SPEC 的 Gate 要求「profiler 已顯示時間主要花在哪」。Advanced 的
   workload 沒有印出 READY 就結束時，以非 0 結束，絕不取樣。
 - （014 補記）作為 Gate 證據的取樣（`--dataset` 且祖先持有 heavy lock）在印出 READY 之前檢查 formal run 的電力條件，
   並等待 load 與背景 heavy workload 的 gate（最多 10 分鐘）；結果寫進取樣前的 JSON（`evidence_conditions`）。
+
+## 補記（2026-10-09）：Gate profiling 的參數
+
+- 格點、目標 recall、ef 的選法、取樣時間與取樣後的 recall 核對，在看任何正式效能結果之前由 decision 015 §2 固定（`benchmarks/gate_profile.py`）。

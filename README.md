@@ -114,6 +114,14 @@ uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
 .venv/bin/python -m benchmarks.report results/runs/<run 目錄> [<run 目錄> ...]
 ```
 
+Gate profiling（decision 015：依正式 run 選各實作 Recall@10 ≥ 0.95 的最小 ef，在 heavy lock 下取樣，取樣後核對 recall）：
+
+```bash
+.venv/bin/python -m benchmarks.gate_profile plan <該資料集全部 formal run 目錄> > plan.sh
+./tools/with-mac-lock bash plan.sh
+.venv/bin/python -m benchmarks.gate_profile check <同一組 run 目錄>
+```
+
 ## 主要決策
 
 - [001 cosine 距離定義、正規化與 tie-break](docs/decisions/001-cosine-distance-and-normalization.md)
@@ -130,3 +138,4 @@ uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
 - [012 正式文字 workload 的規模](docs/decisions/012-text-workload-scale.md)
 - [013 正式 run 的格點（formal config）](docs/decisions/013-formal-grid.md)
 - [014 正式 run 的電力條件、背景 workload 與 index memory 指標](docs/decisions/014-formal-run-conditions-and-index-memory.md)
+- [015 Gate 證據的讀法與 Gate profiling 的參數（事先登記）](docs/decisions/015-gate-evidence.md)
