@@ -1,22 +1,29 @@
 # NEXT
 
-## 目前狀態（2026-10-10 18:10 台灣時間 / 10:10 UTC，使用者再次暫停重負載）
+## 目前狀態（2026-10-11 04:50 台灣時間 / 2026-10-10 20:50 UTC，文字 workload 停在需要使用者決定的地方）
 
 時間一律註明時區（台灣時間 = UTC+8）。
 
 - **暫停與恢復**：
-  - 2026-10-10 01:50（台灣）使用者第一次暫停重負載；10:10（台灣，02:10 UTC）使用者確認可以恢復。`prereg-gate` 併回 main（ce0317a）、`./scripts/test.sh` 全部通過。
-  - 2026-10-10 17:58（台灣，09:58 UTC）使用者要用 Mac，**再次暫停**：以 SIGTERM 中止進行中的 `text-formal-1`，等使用者通知。
-    本專案沒有任何程式在跑，也沒有持有 heavy lock。
-- **formal run 進度**（協定 008-v2，高效能電力模式、Apple 70W）：
-  - 閒置 load 量測 `results/idle_load/20261009T080239Z.json`：`ok`（p95 + 1.0 = 3.35 ≤ 4.0，沒有重工作）。之後的批次以 `--skip-idle` 沿用。
-  - **GloVe 8 份全部 complete**：1 `20261009T080239Z-formal`、2 `20261009T091611Z-formal`、3 `20261009T101347Z-formal`、4 `20261009T105616Z-formal`、
-    5 `20261010T021933Z-formal`、6 `20261010T025425Z-formal`、7 `20261010T034635Z-formal`、8 `20261010T040529Z-formal`。
-    被排除（`--excluded`）：`20261009T113943Z-formal`（GloVe 5 第一次，macOS mediaanalysisd 約 270% CPU → load gate 中止）。
-  - **文字**：`text-formal-1` 第一次 `20261010T083544Z-formal` 因使用者暫停被中止（aborted，18 個子 process 跑到第 15 個）→ 整份重跑，報告以 `--excluded` 列出。
-    文字 1–4 都還要跑（約 4–5 h），之後是 Gate profiling（約 1–1.5 h）。
-  - 恢復時：先 `./scripts/test.sh`（本 commit 之後 binding 早於 HEAD），再
-    `./scripts/formal_launcher.sh results/batches/text-2.log 28800 --skip-idle benchmarks/configs/text-formal-1-m16-order.toml … text-formal-4-highm-scaling.toml`。
+  - 2026-10-10 01:50（台灣）第一次暫停重負載；10:10（台灣）恢復。17:58（台灣）第二次暫停，中止進行中的 `text-formal-1`；18:53（台灣）恢復，`./scripts/test.sh` 全部通過。
+  - 19:25（台灣）前後 `xcode-select` 被切回壞掉的 `/Applications/Xcode.app`（B3 復發），`git` 無法執行，文字批次在前置檢查失敗（沒有產生 run）。
+    以 `DEVELOPER_DIR=/Library/Developer/CommandLineTools` 重新啟動；之後使用者把 `xcode-select` 切回 Command Line Tools。
+- **formal run 進度**：
+  - 閒置 load 量測 `results/idle_load/20261009T080239Z.json`：`ok`。之後的批次以 `--skip-idle` 沿用。
+  - **GloVe 8 份全部 complete，全部在高效能模式（powermode 2）**：1 `20261009T080239Z-formal`、2 `20261009T091611Z-formal`、3 `20261009T101347Z-formal`、
+    4 `20261009T105616Z-formal`、5 `20261010T021933Z-formal`、6 `20261010T025425Z-formal`、7 `20261010T034635Z-formal`、8 `20261010T040529Z-formal`。
+    被排除：`20261009T113943Z-formal`（GloVe 5 第一次，macOS mediaanalysisd → load gate 中止）。
+  - **文字**（被排除的失敗 run：`20261010T083544Z-formal` text-1 使用者暫停中止、`20261010T133129Z-formal` text-2 被 text-to-sql 的兩個 worker 卡住 load 中止、
+    `20261010T202624Z-formal` text-4 invalid）：
+    - text-1 complete `20261010T112849Z-formal`，**powermode 2**（18 個子 process，6 個 `background`：其他專案的 python、mediaanalysisd、mds_stores）。
+    - text-2 complete `20261010T183115Z-formal`，**powermode 0**（開始時電池 56%、充電中，run 中充到 100%）。
+    - text-3 complete `20261010T195251Z-formal`，**powermode 0**。
+    - text-4 **invalid** `20261010T202624Z-formal`，powermode 0：接 AC 時電池從 98% 降到 95%（014：下降 ≥ 3 點作廢並停止）。
+    - `pmset -g custom` 顯示 AC 的 powermode 設定已改為 0（自動），不是本專案改的。結束時電池 93%、「AC attached; not charging」。
+  - **文字報告目前產生不了**：014 補記規定一份報告只合併同一個電力模式的 run，而 text-1（mode 2）與 text-2、3（mode 0）都是 complete，
+    010 §3 / 013 §5 又不允許取代或捨棄 complete 的 run。需要使用者決定（見「目前需要使用者」）。
+  - 尚未做：text-4 重跑、Gate profiling（015 §2：兩個資料集的 formal config 都完成之後）、文字報告。
+
 - **GloVe 正式報告**（`results/reports/glove-100-angular/`，8 個 run，所有 013 §5 的檢查通過）。重點（n = 100,000，Recall@10）：
   - **recall 隨 ef**：三個實作在每個 (n, M, efC) 都沒有系統性惡化，最大相鄰下降 0。Rust 與 hnswlib 在相同 (M, efC, ef) 的 recall 幾乎相同
     （例如 (16, 200) ef 304：0.9568 對 0.9567）。
@@ -35,7 +42,7 @@
 
 ## 目前位置
 
-**Core：除了文字 workload 的正式 run（暫停中）、Gate profiling 與文字報告之外都已完成；GloVe 的正式 run 與報告已完成**：
+**Core：除了文字 workload 的正式 run（等使用者決定電力模式）、Gate profiling 與文字報告之外都已完成；GloVe 的正式 run 與報告已完成**：
 
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
   hnswlib / FAISS adapters（007）、benchmark runner（008，含實作後審查）、比較規則（010）、報告腳本。
@@ -251,7 +258,14 @@
 
 ### 目前需要使用者
 
-- **解除重負載的暫停**（2026-10-10 17:58 台灣時間）：解除後先 `./scripts/test.sh`，再重跑文字 1–4（見「目前狀態」）。
+- **文字 workload 的電力模式不一致**（2026-10-11）：text-1 在高效能（2），text-2、3 在自動（0）。我還沒看任何文字 run 的效能數字。選項：
+  1. （建議其一）**全部用高效能**：text-2、3 因「run 之間電力模式被改變」（環境變化，不是看結果）作廢，請使用者把 AC 的電力模式切回高效能，
+     重跑 text-2、3、4（約 3 小時）。與 GloVe 同一個模式。
+  2. （建議其一）**全部用自動**：text-1 因同樣理由作廢，在自動模式重跑 text-1、4（約 3 小時）。符合使用者最初「自動電力模式」的決定；GloVe 與文字分別在不同模式，各自的報告內部一致。
+  3. 允許文字報告合併兩種模式並逐 run 標示：要改 014 補記；而且 seed variance 格點的 seed 1（text-1）與 seeds 2–5（text-2）會跨模式，不建議。
+  - 選 1 或 2 都要另寫 decision，說明這是環境變化造成的作廢，與結果無關。
+- **電池在接 AC 時下降**：text-4 期間電池 98% → 95%，結束時 93%、「not charging」；text-2 開始時電池只有 56%（中間可能沒有接電源，或負載超過 68W）。
+  在 70W 變壓器下若電池持續無法維持，之後的 run 仍會被作廢。需要使用者確認變壓器與充電狀態（例如是否有拔掉電源、是否開啟最佳化電池充電）。
 - **GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
   是否在看過結果之後補跑 `glove-formal-8`（需另寫 decision，標明是看過結果之後、只因 hygiene 標記），由使用者決定；預設照實報告「只有含標記點的讀值」。
 - **Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。
@@ -296,6 +310,9 @@
 
 ## 需要留意
 
+- **其他專案在沒有 heavy lock 的情況下跑重工作**（2026-10-10 多次）：text-to-sql 的 `validators.cli run --workers 2` 讓 text-2 第一次中止；
+  其他專案的 python 讓 GloVe 1,183,514 與 text-1 的多個子 process 被標記 `background`。本專案的 gate 與標記照規則處理，沒有動它們；
+  要減少損失，需要其他專案的重工作也取 heavy lock 或錯開時間（使用者的跨專案安排）。
 - **機器負載**：本 session 多次觀察到其他 Project 在不取 lock 的情況下跑 CPU 重工作（text-to-sql、agent-gym 各數個 100% CPU 的 process），
   1 分鐘 load 約 8.4；incident-investigator 也長時間持有 heavy lock（process 存活，不是 stale lock）。
   正式 run 會被 008 §2 的 load 門檻擋下（等待最多 10 分鐘後中止），這是預期行為；本專案沒有碰它們。
