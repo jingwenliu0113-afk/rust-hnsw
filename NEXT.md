@@ -1,9 +1,9 @@
 # NEXT
 
-## 目前狀態（2026-10-10 02:00，使用者暫停重負載）
+## 目前狀態（2026-10-10 04:00，恢復正式 run）
 
-- **使用者指示（2026-10-10 01:50 前後）**：使用者要先用 Mac 跑重要工作，**重負載的工作一律先不跑，等使用者通知**；其他能做的照常做。
-  已停止等待中的 formal launcher（GloVe 5–8 尚未開始，沒有中斷任何 run）。本專案沒有任何程式在跑，也沒有持有 heavy lock。
+- 2026-10-10 01:50 前後使用者暫停重負載；04:00 前後使用者確認「Mac 用好了，可以用了」。確認 load 約 1.1、heavy lock 沒人持有、
+  電力條件符合後恢復：`prereg-gate` 已併回 main，依「恢復正式 run 的步驟」繼續。
 - **formal run 進度**（協定 008-v2，高效能電力模式、Apple 70W）：
   - 閒置 load 量測 `results/idle_load/20261009T080239Z.json`：`ok`（p95 + 1.0 = 3.35 ≤ 4.0，沒有重工作）。之後的批次以 `--skip-idle` 沿用。
   - GloVe 1–4 complete：`20261009T080239Z-formal`、`20261009T091611Z-formal`、`20261009T101347Z-formal`、`20261009T105616Z-formal`
@@ -14,8 +14,8 @@
   - heavy lock 自 2026-10-09 12:15Z 起由 llm-serving-lab 持有（`batch_formal_a.sh`），本專案沒有碰它。
 - **decision 015（事先登記，在看任何正式效能結果之前）**：Gate 證據的讀法（QPS 範圍 + variance 格點的 seed 範圍）、Gate profiling 的參數與核對、
   `report.py` 補上 013 §3 的 seed 範圍。初稿經獨立審查，10 個 findings 全部採用。另把批次與等待腳本收進 `scripts/`。
-  **這些 commit 在分支 `prereg-gate`（已 push），尚未併回 main**：併回後要跑完整的 `./scripts/test.sh`（含編譯，屬於重負載），等使用者解除暫停再做。
-  分支沒有改動任何 `MEASUREMENT_PATHS` 的檔案，併回前後的 formal run 可以合併進同一份報告（013 §5）。
+  這些 commit 原本在分支 `prereg-gate`，2026-10-10 併回 main。分支沒有改動任何 `MEASUREMENT_PATHS` 的檔案，
+  併回前後的 formal run 可以合併進同一份報告（013 §5）。
 
 ## 目前位置
 
@@ -90,7 +90,7 @@
 - `7dd11a5 docs: summarize what needs the user in NEXT`
 - `b73300d feat(benchmarks): apply the user's formal-run conditions and phys_footprint index memory (decision 014)`
 - `f077de9 fix(benchmarks): sample background CPU during children and harden the formal-run conditions (014 addendum)`
-- 分支 `prereg-gate`（尚未併回 main）：
+- 分支 `prereg-gate`（2026-10-10 fast-forward 併回 main）：
   - `7a8c86a docs: pre-register the Gate evidence reading and Gate profiling (decision 015)`
   - `1fa384b fix(benchmarks): read the Gate gap with QPS brackets and check every profiling condition (015 review)`
   - `chore(scripts): add the formal batch and launcher scripts; update NEXT`（本次）
@@ -225,11 +225,9 @@
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
    - 待正式 run 的結果出來後，依相近的 Recall@10 為各實作選 ef，在 heavy lock 下取樣。
 
-## Deferred（進行中）
-
-- 2026-10-10 01:50 前後：使用者要先跑重要工作，暫停本專案所有重負載（formal run、Gate profiling、`./scripts/test.sh` 的編譯），等使用者通知。
-
 ## Deferred（已解除）
+
+- 2026-10-10 01:50 前後：使用者要先跑重要工作，暫停本專案所有重負載（formal run、Gate profiling、`./scripts/test.sh` 的編譯）；04:00 前後使用者確認可以恢復。
 
 - 2026-10-09 01:00 使用者暫停正式、performance-sensitive 的 Mac 實驗（自動電力模式、68W）；09:30 解除，並以 decision 014 固定正式 run 的條件。
 
@@ -237,7 +235,6 @@
 
 ### 目前需要使用者
 
-- **解除重負載的暫停**（2026-10-10）：解除後依「恢復正式 run 的步驟」繼續（併回 `prereg-gate`、`./scripts/test.sh`、GloVe 5–8、文字 1–4、Gate profiling）。
 - **之後**：正式報告與 Gate profiling 完成後，依 decision 015 的讀值決定是否進 Advanced、做哪些假設（最多三個）。
 
 
