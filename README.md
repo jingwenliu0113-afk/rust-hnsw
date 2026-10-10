@@ -22,7 +22,7 @@
   | 文字（768 維，正式資料集） | 100,000 | 16 / 200 | 約 0.77 → 0.97 → 0.996 |
 
   完整 GloVe 上，ann-benchmarks 自帶的 neighbors 與本專案以 exact search 產生的 ground truth 完全一致。
-- 正式 benchmark 進行中：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；閒置 load 量測為 `ok`，GloVe 12 份中的 4 份已完成，其餘需要 Mac heavy lock 與閒置的機器（見 `NEXT.md`）。Gate 的讀法在看任何結果之前登記（decision 015）。尚無可報告的效能數字。
+- 正式 benchmark 進行中：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；閒置 load 量測為 `ok`。GloVe 的 8 份已完成並產生正式報告，文字 workload 的 4 份還要在 Mac heavy lock 下跑（見 `NEXT.md`）。Gate 的讀法在看任何結果之前登記（decision 015）；兩個資料集都完成、Gate profiling 之後再把結果寫進 README。
 
 ## 目錄
 

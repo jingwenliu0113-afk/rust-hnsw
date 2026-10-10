@@ -1,25 +1,41 @@
 # NEXT
 
-## 目前狀態（2026-10-10 04:00，恢復正式 run）
+## 目前狀態（2026-10-10 18:10 台灣時間 / 10:10 UTC，使用者再次暫停重負載）
 
-- 2026-10-10 01:50 前後使用者暫停重負載；04:00 前後使用者確認「Mac 用好了，可以用了」。確認 load 約 1.1、heavy lock 沒人持有、
-  電力條件符合後恢復：`prereg-gate` 已併回 main，依「恢復正式 run 的步驟」繼續。
+時間一律註明時區（台灣時間 = UTC+8）。
+
+- **暫停與恢復**：
+  - 2026-10-10 01:50（台灣）使用者第一次暫停重負載；10:10（台灣，02:10 UTC）使用者確認可以恢復。`prereg-gate` 併回 main（ce0317a）、`./scripts/test.sh` 全部通過。
+  - 2026-10-10 17:58（台灣，09:58 UTC）使用者要用 Mac，**再次暫停**：以 SIGTERM 中止進行中的 `text-formal-1`，等使用者通知。
+    本專案沒有任何程式在跑，也沒有持有 heavy lock。
 - **formal run 進度**（協定 008-v2，高效能電力模式、Apple 70W）：
   - 閒置 load 量測 `results/idle_load/20261009T080239Z.json`：`ok`（p95 + 1.0 = 3.35 ≤ 4.0，沒有重工作）。之後的批次以 `--skip-idle` 沿用。
-  - GloVe 1–4 complete：`20261009T080239Z-formal`、`20261009T091611Z-formal`、`20261009T101347Z-formal`、`20261009T105616Z-formal`
-    （第 1 份有 2 個子 process 標記 `background`：其他專案的 python 53% / 72%；依 010 §3 離開主要讀值）。
-  - GloVe 5 **aborted**：`20261009T113943Z-formal`。macOS 的 mediaanalysisd（照片分析）平均約 270% CPU，第 4 個子 process 標記 `background`，
-    之後 load 600 秒沒有降到 4.0 以下 → 依 008 §2 中止。依 013 §5 整份重跑，報告以 `--excluded` 列出這個 run。
-  - 尚未跑：GloVe 5（重跑）–8、文字 1–4、Gate profiling。預估約 3 h + 4–5 h + 1–1.5 h（GloVe 1–4 實際只花 013 估計值的約 56%）。
-  - heavy lock 自 2026-10-09 12:15Z 起由 llm-serving-lab 持有（`batch_formal_a.sh`），本專案沒有碰它。
-- **decision 015（事先登記，在看任何正式效能結果之前）**：Gate 證據的讀法（QPS 範圍 + variance 格點的 seed 範圍）、Gate profiling 的參數與核對、
-  `report.py` 補上 013 §3 的 seed 範圍。初稿經獨立審查，10 個 findings 全部採用。另把批次與等待腳本收進 `scripts/`。
-  這些 commit 原本在分支 `prereg-gate`，2026-10-10 併回 main。分支沒有改動任何 `MEASUREMENT_PATHS` 的檔案，
-  併回前後的 formal run 可以合併進同一份報告（013 §5）。
+  - **GloVe 8 份全部 complete**：1 `20261009T080239Z-formal`、2 `20261009T091611Z-formal`、3 `20261009T101347Z-formal`、4 `20261009T105616Z-formal`、
+    5 `20261010T021933Z-formal`、6 `20261010T025425Z-formal`、7 `20261010T034635Z-formal`、8 `20261010T040529Z-formal`。
+    被排除（`--excluded`）：`20261009T113943Z-formal`（GloVe 5 第一次，macOS mediaanalysisd 約 270% CPU → load gate 中止）。
+  - **文字**：`text-formal-1` 第一次 `20261010T083544Z-formal` 因使用者暫停被中止（aborted，18 個子 process 跑到第 15 個）→ 整份重跑，報告以 `--excluded` 列出。
+    文字 1–4 都還要跑（約 4–5 h），之後是 Gate profiling（約 1–1.5 h）。
+  - 恢復時：先 `./scripts/test.sh`（本 commit 之後 binding 早於 HEAD），再
+    `./scripts/formal_launcher.sh results/batches/text-2.log 28800 --skip-idle benchmarks/configs/text-formal-1-m16-order.toml … text-formal-4-highm-scaling.toml`。
+- **GloVe 正式報告**（`results/reports/glove-100-angular/`，8 個 run，所有 013 §5 的檢查通過）。重點（n = 100,000，Recall@10）：
+  - **recall 隨 ef**：三個實作在每個 (n, M, efC) 都沒有系統性惡化，最大相鄰下降 0。Rust 與 hnswlib 在相同 (M, efC, ef) 的 recall 幾乎相同
+    （例如 (16, 200) ef 304：0.9568 對 0.9567）。
+  - **frontier QPS 讀值**（010 §2）：0.90 / 0.95 / 0.99 時 hnswlib ÷ rust = 1.32 / 1.24 / 1.35，faiss ÷ rust = 2.02 / 2.23 / 1.64。
+  - **015 的 Gate 判讀（事先登記）**：主要目標 0.95 為 `within_quantization`（rust 的 QPS 範圍 [2537, 3234]、hnswlib [3135, 4192]，重疊約 3%）；
+    0.90 為 `uncertain`（QPS 範圍分開，但交點前後的 seed 範圍沒有分開）；0.99 為 `within_quantization`。依 015，GloVe 上「有差距」**不成立**。
+  - **看到結果之後的觀察（不是事先登記的判讀，只供使用者參考）**：variance 格點上，Rust 與 hnswlib 在**同一個 ef** 達到目標、recall 相同到小數第 3–4 位，
+    5 組比較（0.90 的 (16, 200) ef 152、(48, 200) ef 64；0.95 的 (16, 200) ef 304、(48, 200) ef 128；0.99 的 (48, 200) ef 384）
+    hnswlib 的 seed 範圍都整段高於 Rust，median 比值 1.22–1.38。015 的 QPS 範圍規則刻意保守（容許 Rust 的交點落在更小的 ef），所以沒有判為 `gap`。
+  - **build time**（(16, 200)，5 seeds 的 median）：rust 31.4 s、hnswlib 22.9 s、faiss 14.4 s。
+  - **index memory（phys_footprint）**：100k 時 rust 約 103–119 MiB、hnswlib 67–92、faiss 51–76；但 300k 時 rust 186、hnswlib 190、faiss 158。
+    100k 的 Rust 讀值可能包含 allocator 保留下來的暫時副本（B1 的同一個機制，未驗證），看到結果之後的推測，不寫進結論。
+  - **被標記而沒有主要讀值的格點**：1,183,514 的三個 build 全部 `background`（其他專案的 python 間歇 ≥ 50%）、M8 的 Rust build `background`、
+    300k 的 Rust ef 512 / 768 有 `load`。這些格點只有「包含被標記點的讀值」（報告另列，010 §3）。
+- **decision 015** 與相關程式已在 main（事先登記的時間證據：分支 `prereg-gate` 的 7a8c86a、1fa384b，早於任何正式報告）。
 
 ## 目前位置
 
-**Core：除了正式 run（進行到一半，暫停中）、Gate profiling 與正式報告之外都已完成**：
+**Core：除了文字 workload 的正式 run（暫停中）、Gate profiling 與文字報告之外都已完成；GloVe 的正式 run 與報告已完成**：
 
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
   hnswlib / FAISS adapters（007）、benchmark runner（008，含實作後審查）、比較規則（010）、報告腳本。
@@ -235,8 +251,11 @@
 
 ### 目前需要使用者
 
-- **之後**：正式報告與 Gate profiling 完成後，依 decision 015 的讀值決定是否進 Advanced、做哪些假設（最多三個）。
-
+- **解除重負載的暫停**（2026-10-10 17:58 台灣時間）：解除後先 `./scripts/test.sh`，再重跑文字 1–4（見「目前狀態」）。
+- **GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
+  是否在看過結果之後補跑 `glove-formal-8`（需另寫 decision，標明是看過結果之後、只因 hygiene 標記），由使用者決定；預設照實報告「只有含標記點的讀值」。
+- **Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。
+  文字的正式報告與 Gate profiling 完成後，一起交給使用者決定是否進 Advanced。
 
 ### B1.（已決定，decision 014）index memory 的量測定義：phys_footprint 為主、rss 為輔
 
