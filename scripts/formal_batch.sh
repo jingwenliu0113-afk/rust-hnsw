@@ -4,23 +4,39 @@
 # （aborted / invalid / error 的 run 要整份 config 重跑，原本的 run 之後以 report 的 --excluded 列出）。
 #
 # 用法（必須由 with-mac-lock 啟動，通常經由 scripts/formal_launcher.sh）：
-#   ./tools/with-mac-lock ./scripts/formal_batch.sh <log> [--skip-idle] <config>...
+#   ./tools/with-mac-lock ./scripts/formal_batch.sh <log> [--powermode N] [--skip-idle] <config>...
+# --powermode N：每份 config 開始前確認 `pmset -g` 的 powermode 是 N，不是就停下來（decision 016：同一個資料集的 formal run 用同一個電力模式）。
 # --skip-idle：閒置 load 已在先前的批次量過且為 ok 時使用。
 # log 的標記：IDLE_START / IDLE_END / RUN_START / RUN_END / STOP / ALL_DONE。
 # 正式 run 進行中，repo 內不得建立或修改任何檔案、不得 commit、不得跑重工作（NEXT 的執行手冊）。
 set -u
 cd "$(dirname "$0")/.."
 PYTHON=${FORMAL_PYTHON:-.venv/bin/python}
+PMSET=${FORMAL_PMSET:-pmset}
 if [ "$#" -lt 2 ]; then
-  echo "usage: $0 <log> [--skip-idle] <config>..." >&2
+  echo "usage: $0 <log> [--powermode N] [--skip-idle] <config>..." >&2
   exit 64
 fi
 log=$1
 shift
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-if [ "$1" = "--skip-idle" ]; then
+powermode=""
+if [ "$1" = "--powermode" ]; then
+  powermode=$2
+  shift 2
+fi
+check_powermode() {
+  [ -z "$powermode" ] && return 0
+  current=$("$PMSET" -g | awk '$1 == "powermode" {print $2}')
+  if [ "$current" != "$powermode" ]; then
+    echo "STOP powermode=$current expected=$powermode $(stamp)" >> "$log"
+    exit 1
+  fi
+}
+if [ "${1:-}" = "--skip-idle" ]; then
   shift
 else
+  check_powermode
   echo "IDLE_START $(stamp)" >> "$log"
   out=$("$PYTHON" -m benchmarks.idle_load 2>&1)
   code=$?
@@ -35,6 +51,7 @@ else
   fi
 fi
 for config in "$@"; do
+  check_powermode
   echo "RUN_START $(stamp) $config" >> "$log"
   "$PYTHON" -m benchmarks.run "$config" --mode formal >> "$log" 2>&1
   code=$?

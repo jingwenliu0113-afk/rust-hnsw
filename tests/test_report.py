@@ -722,6 +722,34 @@ def test_a_failed_formal_run_must_be_listed_as_excluded(tmp_path):
     write_report(runs, tmp_path / "report", excluded=[failed], roots=[tmp_path / "runs"])
 
 
+def test_a_complete_run_voided_by_a_decision_must_be_listed_as_excluded(tmp_path, monkeypatch):
+    # decision 016：登記作廢的 complete run 不得默默留在 results/ 之外，也不得合併；以 --excluded 列出並附上理由。
+    runs = full_formal_set(tmp_path / "runs")
+    voided = formal_run(tmp_path / "runs" / "20990101T000000Z-formal", report_module.FORMAL_CONFIGS[GLOVE][1], seed=97)
+    with pytest.raises(ReportError, match="cannot be replaced"):
+        write_report(runs, tmp_path / "report", roots=[tmp_path / "runs"])
+    monkeypatch.setitem(report_module.VOIDED_RUNS, voided.name, "decision 016: power mode changed")
+    with pytest.raises(ReportError, match="voided by a decision"):
+        write_report(runs, tmp_path / "report", roots=[tmp_path / "runs"])
+    out = write_report(runs, tmp_path / "report", excluded=[voided], roots=[tmp_path / "runs"])
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert report["excluded_runs"][0]["status"] == "complete"
+    assert report["excluded_runs"][0]["voided"] == "decision 016: power mode changed"
+    assert "power mode changed" in (out / "report.md").read_text(encoding="utf-8")
+
+
+def test_unregistered_complete_runs_still_cannot_be_excluded(tmp_path):
+    runs = full_formal_set(tmp_path / "runs")
+    second = formal_run(tmp_path / "runs" / "second", report_module.FORMAL_CONFIGS[GLOVE][0], seed=96)
+    with pytest.raises(ReportError, match="VOIDED_RUNS"):
+        write_report(runs, tmp_path / "report", excluded=[second], roots=[tmp_path / "runs"])
+
+
+def test_the_registered_voided_runs_are_the_two_text_runs_of_decision_016():
+    assert set(report_module.VOIDED_RUNS) == {"20261010T183115Z-formal", "20261010T195251Z-formal"}
+    assert all(reason.startswith("decision 016") for reason in report_module.VOIDED_RUNS.values())
+
+
 def test_a_run_of_an_unregistered_config_is_not_a_formal_result(tmp_path):
     runs = full_formal_set(tmp_path / "runs")
     extra = formal_run(tmp_path / "runs" / "probe", "benchmarks/configs/glove-correctness.toml", seed=50)

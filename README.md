@@ -118,7 +118,7 @@ uv pip install --python .venv-embed/bin/python -r requirements-embed.txt
 
 ```bash
 mkdir -p results/batches
-./scripts/formal_launcher.sh results/batches/<名稱>.log <最長等待秒數> [--skip-idle] benchmarks/configs/<formal config>.toml ...
+./scripts/formal_launcher.sh results/batches/<名稱>.log <最長等待秒數> --powermode 2 [--skip-idle] benchmarks/configs/<formal config>.toml ...
 ```
 
 Gate profiling（decision 015：依正式 run 選各實作 Recall@10 ≥ 0.95 的最小 ef，在 heavy lock 下取樣，取樣後核對證據條件；
@@ -147,3 +147,4 @@ Gate profiling（decision 015：依正式 run 選各實作 Recall@10 ≥ 0.95 �
 - [013 正式 run 的格點（formal config）](docs/decisions/013-formal-grid.md)
 - [014 正式 run 的電力條件、背景 workload 與 index memory 指標](docs/decisions/014-formal-run-conditions-and-index-memory.md)
 - [015 Gate 證據的讀法與 Gate profiling 的參數（事先登記）](docs/decisions/015-gate-evidence.md)
+- [016 文字 workload 的電力模式不一致：作廢 text-formal-2、3，全部以高效能模式重跑](docs/decisions/016-text-power-mode-voided-runs.md)

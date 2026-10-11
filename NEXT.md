@@ -1,6 +1,6 @@
 # NEXT
 
-## 目前狀態（2026-10-11 04:50 台灣時間 / 2026-10-10 20:50 UTC，文字 workload 停在需要使用者決定的地方）
+## 目前狀態（2026-10-11 05:10 台灣時間 / 2026-10-10 21:10 UTC，依 decision 016 重跑文字 2–4）
 
 時間一律註明時區（台灣時間 = UTC+8）。
 
@@ -20,9 +20,10 @@
     - text-3 complete `20261010T195251Z-formal`，**powermode 0**。
     - text-4 **invalid** `20261010T202624Z-formal`，powermode 0：接 AC 時電池從 98% 降到 95%（014：下降 ≥ 3 點作廢並停止）。
     - `pmset -g custom` 顯示 AC 的 powermode 設定已改為 0（自動），不是本專案改的。結束時電池 93%、「AC attached; not charging」。
-  - **文字報告目前產生不了**：014 補記規定一份報告只合併同一個電力模式的 run，而 text-1（mode 2）與 text-2、3（mode 0）都是 complete，
-    010 §3 / 013 §5 又不允許取代或捨棄 complete 的 run。需要使用者決定（見「目前需要使用者」）。
-  - 尚未做：text-4 重跑、Gate profiling（015 §2：兩個資料集的 formal config 都完成之後）、文字報告。
+  - **decision 016（使用者決定，2026-10-11 04:55 台灣時間）**：文字全部用高效能。text-2、3 作廢（`report.py` 的 `VOIDED_RUNS`，報告以 `--excluded` 列出），
+    使用者已把 AC 電力模式切回 2。批次與等待腳本加上 `--powermode 2`，模式不對就等待 / 停止。
+  - 下一步：`./scripts/test.sh` → `./scripts/formal_launcher.sh results/batches/text-5.log 28800 --powermode 2 --skip-idle`
+    `text-formal-2 … text-formal-4`（約 3 h）→ Gate profiling（015 §2）→ 文字報告（`--excluded` 五個 run，見 016「對實驗的影響」）。
 
 - **GloVe 正式報告**（`results/reports/glove-100-angular/`，8 個 run，所有 013 §5 的檢查通過）。重點（n = 100,000，Recall@10）：
   - **recall 隨 ef**：三個實作在每個 (n, M, efC) 都沒有系統性惡化，最大相鄰下降 0。Rust 與 hnswlib 在相同 (M, efC, ef) 的 recall 幾乎相同
@@ -42,7 +43,7 @@
 
 ## 目前位置
 
-**Core：除了文字 workload 的正式 run（等使用者決定電力模式）、Gate profiling 與文字報告之外都已完成；GloVe 的正式 run 與報告已完成**：
+**Core：除了文字 workload 的正式 run（依 decision 016 重跑 2–4）、Gate profiling 與文字報告之外都已完成；GloVe 的正式 run 與報告已完成**：
 
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
   hnswlib / FAISS adapters（007）、benchmark runner（008，含實作後審查）、比較規則（010）、報告腳本。
@@ -258,14 +259,8 @@
 
 ### 目前需要使用者
 
-- **文字 workload 的電力模式不一致**（2026-10-11）：text-1 在高效能（2），text-2、3 在自動（0）。我還沒看任何文字 run 的效能數字。選項：
-  1. （建議其一）**全部用高效能**：text-2、3 因「run 之間電力模式被改變」（環境變化，不是看結果）作廢，請使用者把 AC 的電力模式切回高效能，
-     重跑 text-2、3、4（約 3 小時）。與 GloVe 同一個模式。
-  2. （建議其一）**全部用自動**：text-1 因同樣理由作廢，在自動模式重跑 text-1、4（約 3 小時）。符合使用者最初「自動電力模式」的決定；GloVe 與文字分別在不同模式，各自的報告內部一致。
-  3. 允許文字報告合併兩種模式並逐 run 標示：要改 014 補記；而且 seed variance 格點的 seed 1（text-1）與 seeds 2–5（text-2）會跨模式，不建議。
-  - 選 1 或 2 都要另寫 decision，說明這是環境變化造成的作廢，與結果無關。
-- **電池在接 AC 時下降**：text-4 期間電池 98% → 95%，結束時 93%、「not charging」；text-2 開始時電池只有 56%（中間可能沒有接電源，或負載超過 68W）。
-  在 70W 變壓器下若電池持續無法維持，之後的 run 仍會被作廢。需要使用者確認變壓器與充電狀態（例如是否有拔掉電源、是否開啟最佳化電池充電）。
+- **（已決定，decision 016）文字 workload 的電力模式**：使用者選「全部用高效能」。text-2、3 作廢（`VOIDED_RUNS`），以 `--powermode 2` 重跑 text-2、3、4。
+- **電池在接 AC 時下降**：text-4 期間電池 98% → 95%；text-2 開始時 56%。使用者沒有指定原因。再發生時照 014 作廢並停止。
 - **GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
   是否在看過結果之後補跑 `glove-formal-8`（需另寫 decision，標明是看過結果之後、只因 hygiene 標記），由使用者決定；預設照實報告「只有含標記點的讀值」。
 - **Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。

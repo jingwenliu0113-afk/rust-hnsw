@@ -12,6 +12,7 @@
 - 合併多個 run 之前（013 §5）：只接受 complete / incomplete 的 run；同一個 build 不得出現在多個 run；
   各 run 的 hnswlib / faiss 擴充模組、套件版本、`rust_hnsw.BUILD_INFO` 必須相同，commit 不同時實作與量測程式不得有差異。
   aborted / invalid / error 的 run 整份重跑，原本的 run 只能以 `--excluded` 列出（不合併資料）。
+  因環境變化而作廢的 complete run 必須登記在 `VOIDED_RUNS`（decision 016），同樣只能以 `--excluded` 列出。
 """
 
 import argparse
@@ -35,6 +36,14 @@ BUILD_METRICS = ("build_ns", "peak_rss_bytes", "index_memory_bytes", "index_foot
 # 013 §5：可以進入報告的 run 狀態；失敗的 run 整份重跑，只能以 --excluded 列出。
 REPORTABLE_STATUS = ("complete", "incomplete")
 FAILED_STATUS = ("aborted", "invalid", "error")
+# decision 016：因 run 之間的環境變化（不是結果）而作廢的 complete run，以 run 目錄名稱登記。
+# 與失敗的 run 一樣只能以 --excluded 列出，資料不合併；沒有登記的 complete run 仍然不得排除（010 §3）。
+VOIDED_RUNS = {
+    "20261010T183115Z-formal": "decision 016: the AC power mode was changed from high performance (2) to automatic (0) outside this "
+                               "project between text-formal-1 and this run; the text workload stays in high-performance mode",
+    "20261010T195251Z-formal": "decision 016: run in automatic power mode (0) after the same outside change; the text workload stays "
+                               "in high-performance mode",
+}
 REPO = Path(__file__).resolve().parents[1]
 # 實作與量測程式：合併的 run 之間（不同 commit 時）這些路徑不得有差異（013 §5）。
 MEASUREMENT_PATHS = (
@@ -737,7 +746,7 @@ def markdown(report: dict) -> str:
                   + (f"（blob {c['formal_config']['blob'][:12]}）" if c.get("formal_config") else "") for c in report["run_configs"]]
     for title, key in (("結果不足 k 的點", "incomplete_points"), ("被標記的點（不進入主要讀值）", "flagged_points"),
                        ("失敗的子 process", "failed_children"),
-                       ("被排除的 run（aborted / invalid / error；整份 config 已重跑，資料不合併，013 §5）", "excluded_runs")):
+                       ("被排除的 run（aborted / invalid / error，或 decision 016 登記作廢；整份 config 已重跑，資料不合併，013 §5）", "excluded_runs")):
         lines += ["", f"## {title}", ""]
         items = report[key]
         lines += [f"- {json.dumps(item, ensure_ascii=False)}" for item in items] if items else ["（無）"]
@@ -803,14 +812,18 @@ def _load(run_dir) -> dict:
 
 
 def excluded_runs(run_dirs) -> list[dict]:
-    """只有失敗的 run 可以被排除（013 §5）；complete / incomplete 的 run 不得排除，避免事後挑選。"""
+    """只有失敗的 run（013 §5）與 decision 016 登記作廢的 run 可以被排除；其他 complete / incomplete 的 run 不得排除，避免事後挑選。"""
     entries = []
     for run_dir in run_dirs:
         record = _load(run_dir)
-        if record["status"] not in FAILED_STATUS:
-            raise ReportError(f"{run_dir} has status {record['status']!r}; only aborted / invalid / error runs can be "
-                              "excluded")
-        entries.append({"run": str(run_dir), "status": record["status"], "status_reasons": record["status_reasons"]})
+        voided = VOIDED_RUNS.get(Path(run_dir).name)
+        if record["status"] not in FAILED_STATUS and voided is None:
+            raise ReportError(f"{run_dir} has status {record['status']!r}; only aborted / invalid / error runs and runs "
+                              "voided by a decision (VOIDED_RUNS) can be excluded")
+        entry = {"run": str(run_dir), "status": record["status"], "status_reasons": record["status_reasons"]}
+        if voided is not None:
+            entry["voided"] = voided
+        entries.append(entry)
     return entries
 
 
@@ -850,6 +863,9 @@ def check_formal_set(records: list[dict], run_dirs, excluded_dirs, roots=None) -
                 continue
             if other.get("status") in FAILED_STATUS:
                 raise ReportError(f"{path.parent} is a failed formal run of {_config_path(other)}; list it with --excluded")
+            if path.parent.name in VOIDED_RUNS:
+                raise ReportError(f"{path.parent} was voided by a decision ({VOIDED_RUNS[path.parent.name]}); "
+                                  "list it with --excluded")
             raise ReportError(f"{path.parent} is another formal run of {_config_path(other)}; a completed formal run "
                               "cannot be replaced or dropped (010 §3)")
 
