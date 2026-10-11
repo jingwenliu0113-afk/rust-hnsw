@@ -140,8 +140,7 @@ def test_main_uses_the_one_minute_load_and_excludes_only_ancestors(tmp_path, mon
     assert record["power"]["powermode"] == 0 and record["end_power"]["powermode"] == 0
 
 
-@pytest.mark.parametrize("end", [{"power_source": "Battery Power"}, {"powermode": 2},
-                                 {"battery": {"percent": 96, "state": "charging"}}])
+@pytest.mark.parametrize("end", [{"power_source": "Battery Power"}, {"powermode": 2}])
 def test_a_power_change_during_the_measurement_is_never_ok(tmp_path, monkeypatch, end):
     states = iter([dict(FORMAL_POWER), {**FORMAL_POWER, **end}])
     monkeypatch.setattr(environment, "check_lock", lambda: "owner")

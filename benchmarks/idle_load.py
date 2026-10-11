@@ -161,12 +161,11 @@ def main(argv=None) -> int:
     heavy = heavy_processes(processes, exclude=ancestors)
     summary = summarize(loads)
     status = verdict(summary, heavy)
-    # 量測結束時電力條件仍要成立（014 補記）：模式不變、電量沒有比開始時低 3 點以上；不符就不得寫成 ok。
+    # 量測結束時電力條件仍要成立（014 補記）：模式不變；不符就不得寫成 ok。電量只記錄（decision 017）。
     end_power = environment.power_state()
-    peak = None if power["battery"] is None else power["battery"]["percent"]
     power_error = None
     try:
-        environment.check_formal_power(end_power, battery_peak=peak, powermode=power["powermode"])
+        environment.check_formal_power(end_power, powermode=power["powermode"])
     except environment.PreflightError as err:
         status, power_error = "invalid_power", str(err)
     record = {

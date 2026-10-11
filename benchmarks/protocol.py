@@ -7,7 +7,8 @@
 from benchmarks.metrics import TIE_EPS
 
 # 008-v2：使用者 2026-10-09 的決定（decision 014）：formal 的電力條件、背景 heavy workload 的 gate、index memory 改以 phys_footprint 為主。
-PROTOCOL_VERSION = "008-v2"
+# 008-v3：使用者 2026-10-11 的決定（decision 017）：取消電量下降的作廢規則，電量只記錄。
+PROTOCOL_VERSION = "008-v3"
 
 # 主要量測的 k；Recall@1 另外以 k = 1 的整批 search 取得（008 §7）。
 K = 10
@@ -48,8 +49,8 @@ LOCK_DIR = "/tmp/ai-portfolio-mac-heavy.lock"
 # 同一個 run 內電力模式不得改變；報告不合併不同電力模式的 run（014 補記）。
 FORMAL_POWERMODES = (0, 2)
 FORMAL_ADAPTER = {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"}
-# 電量比 run 期間看到的最高電量低這麼多個百分點以上：「電池持續明顯下降」，run 作廢（invalid）並停止（014 補記）。
-BATTERY_DROP_LIMIT_PCT = 3
+# 017（使用者決定）：取消 014 的電量下降規則（接 AC 時 macOS 充滿後讓電量回落幾點是正常的電池管理，不影響 CPU 速度）；
+# 電量照常記錄（power_samples），不再是 run 是否有效的條件。協定版本因此改為 008-v3。
 # 014：背景 heavy workload（自己、祖先與受測子 process 以外；%CPU 以 100 = 一個 core）：
 # - gate：子 process 啟動前，ps 的瞬間 %CPU ≥ BACKGROUND_PCPU 就等待（只會延後啟動）；
 # - 子 process 期間：每 BACKGROUND_POLL_S 秒讀一次累積 CPU 時間，以區間平均判定（014 補記），任一成立就標記 background：
@@ -86,7 +87,7 @@ def protocol_record() -> dict:
         "memory_tolerance": {"relative": MEMORY_RELATIVE, "absolute_bytes": MEMORY_ABSOLUTE_BYTES},
         "formal_powermodes": list(FORMAL_POWERMODES),
         "formal_adapter": dict(FORMAL_ADAPTER),
-        "battery_drop_limit_pct": BATTERY_DROP_LIMIT_PCT,
+        "battery_rule": "recorded only (decision 017)",
         "background_pcpu": BACKGROUND_PCPU,
         "background_command_pcpu": BACKGROUND_COMMAND_PCPU,
         "background_sustained_intervals": BACKGROUND_SUSTAINED_INTERVALS,

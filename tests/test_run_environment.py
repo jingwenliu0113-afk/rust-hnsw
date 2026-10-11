@@ -482,9 +482,15 @@ def test_adapter_is_parsed_from_pmset_ac():
 
 def test_formal_power_accepts_the_registered_conditions():
     environment.check_formal_power(FORMAL_POWER)
-    environment.check_formal_power(FORMAL_POWER, battery_peak=100)
-    environment.check_formal_power({**FORMAL_POWER, "battery": {"percent": 98, "state": "charging"}}, battery_peak=100)
-    environment.check_formal_power({**FORMAL_POWER, "battery": None}, battery_peak=100)  # 沒有電池的機器
+    environment.check_formal_power(FORMAL_POWER, powermode=0)
+    environment.check_formal_power({**FORMAL_POWER, "battery": None})  # 沒有電池的機器
+
+
+@pytest.mark.parametrize("battery", [{"percent": 96, "state": "AC attached"}, {"percent": 40, "state": "charging"},
+                                     {"percent": 90, "state": "discharging"}])
+def test_battery_level_is_not_a_formal_condition(battery):
+    # decision 017：接 AC 時電量回落（例如充滿後 macOS 停止充電）不影響 CPU 速度，電量只記錄、不作為條件。
+    environment.check_formal_power({**FORMAL_POWER, "battery": battery}, powermode=0)
 
 
 @pytest.mark.parametrize("change, message", [
@@ -494,12 +500,10 @@ def test_formal_power_accepts_the_registered_conditions():
     ({"adapter": {"manufacturer": "Apple Inc.", "name": "140W USB-C Power Adapter"}}, "70W"),
     ({"adapter": None}, "70W"),
     ({"adapter": {"manufacturer": "Other Inc.", "name": "70W USB-C Power Adapter"}}, "70W"),
-    ({"battery": {"percent": 97, "state": "discharging"}}, "battery dropped"),
-    ({"battery": {"percent": 97, "state": "charging"}}, "battery dropped"),  # 與充電狀態無關
 ])
 def test_formal_power_refuses_each_violation(change, message):
     with pytest.raises(PreflightError, match=message):
-        environment.check_formal_power({**FORMAL_POWER, **change}, battery_peak=100)
+        environment.check_formal_power({**FORMAL_POWER, **change})
 
 
 def test_high_performance_is_allowed_but_must_not_change_during_a_run():

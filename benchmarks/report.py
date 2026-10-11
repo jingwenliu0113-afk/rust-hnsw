@@ -36,13 +36,15 @@ BUILD_METRICS = ("build_ns", "peak_rss_bytes", "index_memory_bytes", "index_foot
 # 013 §5：可以進入報告的 run 狀態；失敗的 run 整份重跑，只能以 --excluded 列出。
 REPORTABLE_STATUS = ("complete", "incomplete")
 FAILED_STATUS = ("aborted", "invalid", "error")
-# decision 016：因 run 之間的環境變化（不是結果）而作廢的 complete run，以 run 目錄名稱登記。
+# decision 016、017：因環境變化或協定修訂（不是結果）而作廢的 complete run，以 run 目錄名稱登記。
 # 與失敗的 run 一樣只能以 --excluded 列出，資料不合併；沒有登記的 complete run 仍然不得排除（010 §3）。
 VOIDED_RUNS = {
     "20261010T183115Z-formal": "decision 016: the AC power mode was changed from high performance (2) to automatic (0) outside this "
                                "project between text-formal-1 and this run; the text workload stays in high-performance mode",
     "20261010T195251Z-formal": "decision 016: run in automatic power mode (0) after the same outside change; the text workload stays "
                                "in high-performance mode",
+    "20261010T112849Z-formal": "decision 017: run under protocol 008-v2 (battery-drop rule); the user removed that rule, so the text "
+                               "workload is rerun under 008-v3 and a report cannot merge the two versions",
 }
 REPO = Path(__file__).resolve().parents[1]
 # 實作與量測程式：合併的 run 之間（不同 commit 時）這些路徑不得有差異（013 §5）。

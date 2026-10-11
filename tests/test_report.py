@@ -745,9 +745,12 @@ def test_unregistered_complete_runs_still_cannot_be_excluded(tmp_path):
         write_report(runs, tmp_path / "report", excluded=[second], roots=[tmp_path / "runs"])
 
 
-def test_the_registered_voided_runs_are_the_two_text_runs_of_decision_016():
-    assert set(report_module.VOIDED_RUNS) == {"20261010T183115Z-formal", "20261010T195251Z-formal"}
-    assert all(reason.startswith("decision 016") for reason in report_module.VOIDED_RUNS.values())
+def test_the_registered_voided_runs_are_the_text_runs_of_decisions_016_and_017():
+    reasons = report_module.VOIDED_RUNS
+    assert {name for name, reason in reasons.items() if reason.startswith("decision 016")} == {
+        "20261010T183115Z-formal", "20261010T195251Z-formal"}
+    assert {name for name, reason in reasons.items() if reason.startswith("decision 017")} == {"20261010T112849Z-formal"}
+    assert len(reasons) == 3
 
 
 def test_a_run_of_an_unregistered_config_is_not_a_formal_result(tmp_path):

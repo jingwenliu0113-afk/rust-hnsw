@@ -103,10 +103,8 @@ def formal_preflight(context: dict) -> dict:
     power = environment.power_state()
     environment.check_formal_power(power)
     digests = environment.check_dataset_registered(context["dataset"])
-    battery = None if power["battery"] is None else power["battery"]["percent"]
-    # 014 補記：電量以 run 期間看到的最高值為基準；電力模式在 run 內不得改變。
-    context.update(owner=owner, head=head, extension_sha256=_extension_digests(), battery_peak=battery,
-                   powermode=power["powermode"])
+    # 014 補記：電力模式在 run 內不得改變。電量只記錄（decision 017）。
+    context.update(owner=owner, head=head, extension_sha256=_extension_digests(), powermode=power["powermode"])
     return {"lock_owner": owner, "head": head, "config": config, "extension_sha256": context["extension_sha256"],
             "dataset_sha256": digests,
             "power": {key: power[key] for key in ("power_source", "powermode", "adapter", "adapter_watts", "battery")}}
@@ -114,7 +112,7 @@ def formal_preflight(context: dict) -> dict:
 
 def formal_recheck(context: dict) -> None:
     """每個子 process 啟動前與 run 結束時重新確認（008 §1）：lock、HEAD、工作目錄、三個擴充模組都沒有變；
-    電力條件仍成立、電量沒有比 run 開始時明顯下降（014）。不成立時 run 作廢（invalid）並停止。"""
+    電力條件仍成立（014；電量只記錄，decision 017）。不成立時 run 作廢（invalid）並停止。"""
     try:
         _, owner = environment.read_lock_owner()
         if owner != context["owner"]:
@@ -133,11 +131,8 @@ def formal_recheck(context: dict) -> None:
 
 
 def check_power(context: dict, state: dict) -> None:
-    """更新 run 期間的最高電量，再檢查 014 的電力條件（formal_preflight 寫入 context；測試的假 preflight 沒有時只檢查條件本身）。"""
-    battery = state["battery"]
-    if battery is not None and context.get("battery_peak") is not None:
-        context["battery_peak"] = max(context["battery_peak"], battery["percent"])
-    environment.check_formal_power(state, battery_peak=context.get("battery_peak"), powermode=context.get("powermode"))
+    """014 的電力條件，電力模式須與 run 開始時相同（formal_preflight 寫入 context；測試的假 preflight 沒有時只檢查條件本身）。"""
+    environment.check_formal_power(state, powermode=context.get("powermode"))
 
 
 def read_background() -> list[dict]:

@@ -490,19 +490,33 @@ def test_smoke_records_background_workload_without_waiting(tmp_path, fast_sampli
 
 
 def test_a_power_violation_during_a_child_voids_and_stops_the_run(tmp_path):
-    # 014 補記：子 process 期間的電力取樣發現電量比最高值低 3 點：記錄這個子 process，run 作廢（invalid）並停止。
-    states = iter([{**FORMAL_POWER, "battery": {"percent": 100, "state": "charged"}},
-                   {**FORMAL_POWER, "battery": {"percent": 97, "state": "discharging"}}] + [dict(FORMAL_POWER)] * 100)
+    # 014 補記：子 process 期間的電力取樣發現改用電池供電：記錄這個子 process，run 作廢（invalid）並停止。
+    states = iter([dict(FORMAL_POWER), {**FORMAL_POWER, "power_source": "Battery Power"}] + [dict(FORMAL_POWER)] * 100)
 
     def preflight(context):
-        context.update(battery_peak=100, powermode=0)
+        context.update(powermode=0)
         return {"checks": "passed (test)"}
 
     hooks = passing_formal_hooks(formal_preflight=preflight, power_reader=lambda: next(states))
     result = run(stub_config(["exact-stub"], seeds=(1, 2)), "formal", tmp_path, implementations=STUBS, hooks=hooks)
     assert result.record["status"] == "invalid"
-    assert "battery dropped" in " ".join(result.record["status_reasons"])
-    assert len(result.record["children"]) == 1 and "battery" in result.record["children"][0]["power_violation"]
+    assert "AC power" in " ".join(result.record["status_reasons"])
+    assert len(result.record["children"]) == 1 and "AC power" in result.record["children"][0]["power_violation"]
+
+
+def test_a_battery_drop_on_ac_is_recorded_but_does_not_void_the_run(tmp_path):
+    # decision 017：電量下降只記錄在 power_samples，run 照常完成。
+    states = iter([{**FORMAL_POWER, "battery": {"percent": p, "state": "AC attached"}} for p in [100, 96, 92] * 100])
+
+    def preflight(context):
+        context.update(powermode=0)
+        return {"checks": "passed (test)"}
+
+    hooks = passing_formal_hooks(formal_preflight=preflight, power_reader=lambda: next(states))
+    result = run(stub_config(["exact-stub"], seeds=(1, 2)), "formal", tmp_path, implementations=STUBS, hooks=hooks)
+    assert result.record["status"] == "complete"
+    samples = [s["battery"]["percent"] for c in result.record["children"] for s in c["power_samples"]]
+    assert min(samples) < 100 and all(c["power_violation"] is None for c in result.record["children"])
 
 
 def test_smoke_records_but_does_not_wait_for_load(tmp_path):
@@ -829,8 +843,8 @@ def test_formal_preflight_runs_every_check(passing_environment):
     checks = run_module.formal_preflight(context)
     assert sorted(called) == sorted(PREFLIGHT_CHECKS)
     assert checks["extension_sha256"] == {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"}
-    # 014：電力條件寫進 formal_checks，run 開始時的電量供之後的重新確認比較。
-    assert checks["power"]["powermode"] == 0 and context["battery_peak"] == 100 and context["powermode"] == 0
+    # 014：電力條件寫進 formal_checks，run 開始時的電力模式供之後的重新確認比較（電量只記錄，decision 017）。
+    assert checks["power"]["powermode"] == 0 and context["powermode"] == 0 and "battery_peak" not in context
 
 
 @pytest.mark.parametrize("name", PREFLIGHT_CHECKS)
@@ -845,23 +859,22 @@ def test_each_preflight_check_can_refuse(passing_environment, monkeypatch, name)
 
 def recheck_context():
     return {"owner": "pid=1\n", "head": "abc", "extension_sha256": {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"},
-            "battery_peak": 100, "powermode": 0}
+            "powermode": 0}
 
 
-def test_formal_recheck_checks_power_against_the_run_peak(passing_environment, monkeypatch):
-    # 真正的 check_formal_power：基準是 run 期間的最高電量，先充到 100 再降到 96 也要作廢；電力模式不得改變。
+def test_formal_recheck_checks_the_real_power_conditions(passing_environment, monkeypatch):
+    # 真正的 check_formal_power：電量下降不作廢（decision 017）；電力模式不得改變、不得改用電池供電。
     monkeypatch.setattr(environment, "check_formal_power", REAL_CHECK_FORMAL_POWER)
-    context = {**recheck_context(), "battery_peak": 92}
-    for percent in (96, 100):
-        monkeypatch.setattr(environment, "power_state", lambda p=percent: {**FORMAL_POWER, "battery": {"percent": p, "state": "charging"}})
-        run_module.formal_recheck(context)
-    assert context["battery_peak"] == 100
-    monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "battery": {"percent": 97, "state": "charging"}})
-    with pytest.raises(PreflightError, match="battery dropped from 100%"):
-        run_module.formal_recheck(context)
+    for percent in (100, 96, 80):
+        monkeypatch.setattr(environment, "power_state",
+                            lambda p=percent: {**FORMAL_POWER, "battery": {"percent": p, "state": "AC attached"}})
+        run_module.formal_recheck(recheck_context())
     monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "powermode": 2})
     with pytest.raises(PreflightError, match="changed during the run"):
-        run_module.formal_recheck({**recheck_context(), "battery_peak": 100})
+        run_module.formal_recheck(recheck_context())
+    monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "power_source": "Battery Power"})
+    with pytest.raises(PreflightError, match="AC power"):
+        run_module.formal_recheck(recheck_context())
 
 
 def test_the_real_readers_exclude_the_runner_and_its_ancestors(monkeypatch):
@@ -881,7 +894,7 @@ def test_formal_recheck_passes_when_nothing_changed(passing_environment):
 @pytest.mark.parametrize(
     ("change", "message"),
     [("owner", "owner"), ("head", "HEAD"), ("dirty", "dirty"), ("faiss", "faiss"), ("missing", "FileNotFoundError"),
-     ("power", "battery")],
+     ("power", "powermode")],
 )
 def test_formal_recheck_detects_each_change(passing_environment, monkeypatch, change, message):
     _, digests = passing_environment
@@ -896,9 +909,9 @@ def test_formal_recheck_detects_each_change(passing_environment, monkeypatch, ch
     elif change == "faiss":
         digests["c"] = "changed"
     elif change == "power":
-        def drained(state, battery_peak=None, powermode=None):
-            raise PreflightError(f"battery dropped from {battery_peak}%")
-        monkeypatch.setattr(environment, "check_formal_power", drained)
+        def changed(state, powermode=None):
+            raise PreflightError(f"pmset powermode changed during the run: {powermode} -> 2")
+        monkeypatch.setattr(environment, "check_formal_power", changed)
     else:
         def missing(path):
             raise FileNotFoundError(path)

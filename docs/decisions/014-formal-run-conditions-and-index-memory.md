@@ -124,3 +124,8 @@
 - 作為 Gate 證據的 profiling（`--dataset` 且祖先持有 heavy lock，009）適用相同的電力條件與背景 gate；只驗證工具的取樣不檢查。
 - formal run 進行中，repo 內不得出現任何新檔案（包含 untracked 與 `.claude/`）：每次重新確認都要求 `git status` 為空。
   `.gitignore` 加入 Claude Code 會自動產生的 `/.claude/settings.local.json` 與 `/.claude/worktrees/`。
+
+## 補記（2026-10-11）：電量下降規則已取消
+
+- §2「電池持續明顯下降」與補記的「以最高電量為基準、低 3 點作廢」由使用者取消（decision 017，協定 008-v3）。
+  接著 AC 時 macOS 充滿後讓電量回落幾點會觸發這條規則，但不影響 CPU 速度；電量只記錄，不再是有效性條件。

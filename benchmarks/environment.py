@@ -334,9 +334,9 @@ def power_state() -> dict:
             "battery": parse_battery(batt)}
 
 
-def check_formal_power(state: dict, battery_peak: int | None = None, powermode: int | None = None) -> None:
-    """decision 014 與補記：AC 電源、允許的電力模式（`powermode` 給定時必須與它相同）、Apple 原廠 70W 變壓器；
-    `battery_peak`（run 期間看到的最高電量）給定時，目前電量比它低 BATTERY_DROP_LIMIT_PCT 點以上就拒絕（不論是否在充電）。"""
+def check_formal_power(state: dict, powermode: int | None = None) -> None:
+    """decision 014 與補記：AC 電源、允許的電力模式（`powermode` 給定時必須與它相同）、Apple 原廠 70W 變壓器。
+    電量只記錄，不再是條件（decision 017 取消 014 的電量下降規則）。"""
     check_ac_power(state["power_source"])
     if state["powermode"] not in protocol.FORMAL_POWERMODES:
         raise PreflightError(f"formal runs need pmset powermode in {protocol.FORMAL_POWERMODES}, currently {state['powermode']!r}")
@@ -344,11 +344,6 @@ def check_formal_power(state: dict, battery_peak: int | None = None, powermode: 
         raise PreflightError(f"pmset powermode changed during the run: {powermode} -> {state['powermode']}")
     if state["adapter"] != protocol.FORMAL_ADAPTER:
         raise PreflightError(f"formal runs need the {protocol.FORMAL_ADAPTER}, currently {state['adapter']!r}")
-    battery = state["battery"]
-    if battery_peak is not None and battery is not None \
-            and battery["percent"] <= battery_peak - protocol.BATTERY_DROP_LIMIT_PCT:
-        raise PreflightError(f"battery dropped from {battery_peak}% to {battery['percent']}% during the run "
-                             f"(limit {protocol.BATTERY_DROP_LIMIT_PCT} points): the run is void")
 
 
 def background_processes(exclude=(), threshold: float = protocol.BACKGROUND_PCPU) -> list[dict]:
