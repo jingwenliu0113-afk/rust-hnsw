@@ -428,6 +428,54 @@ def test_unregistered_datasets_have_no_gate_reading():
     assert build_report([make_record(text_cell("rust-hnsw", three_seeds([(32, 0.96, 1.0)])), dataset="d")])["gate"] == {}
 
 
+# ---- 圖：frontier 與 scaling ----
+
+
+def aggregates_of(children):
+    return report_module.aggregate(report_module.point_rows([make_record(children)]))
+
+
+def test_pareto_front_keeps_only_points_not_dominated_in_recall_and_the_metric():
+    rust = curve("rust-hnsw", [(10, 0.80, 1000.0), (20, 0.90, 800.0), (40, 0.95, 500.0), (80, 0.96, 100.0)])
+    worse = curve("rust-hnsw", [(10, 0.85, 700.0), (20, 0.94, 900.0)], m=8)  # 0.85 / 700 被 0.90 / 800 支配
+    front = report_module.pareto_front(aggregates_of([rust, worse]), "qps", higher_is_better=True)
+    assert [(a["recall10"]["median"], a["qps"]["median"]) for a in front] == [
+        (0.80, 1000.0), (0.94, 900.0), (0.95, 500.0), (0.96, 100.0)]
+
+
+def test_pareto_front_for_latency_prefers_lower_values():
+    points = [make_point(10, 0.90, 1.0, p50=300.0), make_point(20, 0.95, 1.0, p50=200.0), make_point(40, 0.97, 1.0, p50=500.0)]
+    front = report_module.pareto_front(aggregates_of([make_child("rust-hnsw", points)]), "p50_ns", higher_is_better=False)
+    # 0.90 / 300 被 0.95 / 200 支配（recall 更高、latency 更低）。
+    assert [a["recall10"]["median"] for a in front] == [0.95, 0.97]
+
+
+def test_frontier_and_scaling_plots_use_only_unflagged_points(tmp_path):
+    children = [curve(impl, [(10, 0.92, q), (40, 0.97, q / 2)], n=n, m=16, efc=200)
+                for impl, q in (("rust-hnsw", 1000.0), ("hnswlib", 1500.0)) for n in (1000, 2000)]
+    flagged_only = curve("rust-hnsw", [(10, 0.92, 1000.0)], n=3000, m=16, efc=200, flags=["load"])
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.json").write_text(json.dumps(make_record(children + [flagged_only], mode="smoke")), encoding="utf-8")
+    out = write_report([run_dir], tmp_path / "report")
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    # n = 3000 只有被標記的點：沒有 frontier 圖；scaling 只畫有主要讀值的 n。
+    assert {"frontier_n1000.png", "frontier_n2000.png", "scaling.png"} <= set(report["figures"])
+    assert "frontier_n3000.png" not in report["figures"]
+    assert all((out / name).exists() for name in report["figures"])
+    assert "## 圖" in (out / "report.md").read_text(encoding="utf-8")
+
+
+def test_scaling_plot_needs_two_sizes(tmp_path):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    report = build_report([make_record([curve("rust-hnsw", [(10, 0.92, 1000.0)], m=16, efc=200)])])
+    assert report_module.scaling_plots(report, tmp_path, plt) == []
+
+
 # ---- 010 §5：scaling ----
 
 

@@ -362,6 +362,22 @@ def gate_reading(clean_aggregates: list[dict], all_aggregates: list[dict], datas
     return result
 
 
+def pareto_front(aggregates: list[dict], metric: str, higher_is_better: bool) -> list[dict]:
+    """recall–指標的 frontier：沒有其他點的 median Recall@10 不低於它、指標又更好（只用來畫圖，讀值仍依 010 §2）。
+
+    回傳依 Recall@10 由低到高排序的點。指標或 recall 缺值的點不參與。
+    """
+    points = [a for a in aggregates if a["recall10"] is not None and a.get(metric) is not None]
+    points.sort(key=lambda a: (-a["recall10"]["median"], -a[metric]["median"] if higher_is_better else a[metric]["median"]))
+    front, best = [], None
+    for a in points:
+        value = a[metric]["median"]
+        if best is None or (value > best if higher_is_better else value < best):
+            front.append(a)
+            best = value
+    return front[::-1]
+
+
 def recall_vs_ef(aggregates: list[dict]) -> list[dict]:
     """010 §6：最大 ef 的 median Recall@10 低於最小 ef 時為系統性惡化；另報最大的相鄰下降。"""
     groups = defaultdict(list)
@@ -533,6 +549,7 @@ def build_report(records: list[dict], labels: list[str] | None = None, changed_f
         "variance_ranges_all_builds": variance_ranges(all_aggregates, dataset, implementations),
         "gate": gate_reading(clean_aggregates, all_aggregates, dataset),
         "seed_variance": all_aggregates,
+        "clean_aggregates": clean_aggregates,
         "order_variance": order_variance(rows),
         "scaling": scaling(build_rows(records)),
         "recall_vs_ef": recall_vs_ef(all_aggregates),
@@ -744,6 +761,11 @@ def markdown(report: dict) -> str:
                      f"{span(s['peak_rss_bytes'], 2**20, 1)} | {span(s['index_footprint_bytes'], 2**20, 1)} | "
                      f"{span(s['index_memory_bytes'], 2**20, 1)} | {s['builds']} | {s['flagged_builds']} |")
 
+    if report.get("figures"):
+        lines += ["", "## 圖", "",
+                  "frontier 與 scaling 圖排除被標記的點（與主要讀值相同）；圖只呈現形狀，數字以上面的表為準（010 §2：不內插）。", ""]
+        lines += [f"- `{name}`" for name in report["figures"]]
+
     if report.get("run_configs"):
         lines += ["", "## 合併的 run", ""]
         lines += [f"- {c['run']}：{c['status']}，config {c['config']}"
@@ -808,7 +830,146 @@ def plots(report: dict, out_dir: Path) -> list[Path]:
         fig.savefig(path, dpi=120)
         plt.close(fig)
         written.append(path)
+    written += frontier_plots(report, out_dir, plt)
+    written += scaling_plots(report, out_dir, plt)
     return written
+
+
+# 三個實作的固定顏色與標記（顏色跟著實作走，不隨排序或篩選改變；色盲可辨識度以 dataviz 的 validator 驗證過，
+# 青綠對白底的對比不足 3:1，所以每條線另有標記形狀與線尾的直接標籤）。
+IMPL_STYLE = {
+    "rust-hnsw": {"color": "#2a78d6", "marker": "o"},
+    "hnswlib": {"color": "#eb6834", "marker": "s"},
+    "faiss-hnsw": {"color": "#1baf7a", "marker": "^"},
+}
+FRONTIER_PANELS = (  # (指標, 比例, 單位標籤, 越高越好)
+    ("qps", 1.0, "QPS (median over seeds)", True),
+    ("p50_ns", 1e3, "P50 latency (µs)", False),
+    ("p95_ns", 1e3, "P95 latency (µs)", False),
+    ("index_footprint_bytes", 2**20, "index memory, phys_footprint (MiB)", False),
+)
+
+
+def _plain_log_ticks(axis):
+    """log 軸的刻度以一般數字顯示（不用 6×10¹ 這種科學記號）。"""
+    from matplotlib.ticker import FuncFormatter
+
+    axis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    axis.set_minor_formatter(FuncFormatter(lambda v, _: f"{v:g}" if str(f"{v:g}")[0] in "25" else ""))
+
+
+def _n_ticks(ax, ns):
+    labels = {n: (f"{n / 1e6:.2f}M" if n >= 1_000_000 else f"{n // 1000}k") for n in ns}
+    from matplotlib.ticker import NullLocator
+
+    ax.set_xticks(list(ns))
+    ax.set_xticklabels([labels[n] for n in ns])
+    ax.xaxis.set_minor_locator(NullLocator())
+
+
+def _style_axes(ax):
+    ax.grid(True, color="#e6e5e1", linewidth=0.8)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color("#b4b2aa")
+    ax.tick_params(colors="#52514e", labelsize=8)
+
+
+def _impl_line(ax, impl, xs, ys):
+    style = IMPL_STYLE.get(impl, {"color": "#52514e", "marker": "o"})
+    ax.plot(xs, ys, color=style["color"], marker=style["marker"], markersize=5, linewidth=2,
+            markeredgecolor="#fcfcfb", markeredgewidth=1, label=impl)
+    ax.annotate(impl, (xs[-1], ys[-1]), xytext=(4, 0), textcoords="offset points", fontsize=7, color="#52514e",
+                va="center")
+
+
+def frontier_plots(report: dict, out_dir: Path, plt) -> list[Path]:
+    """每個 n：recall–QPS、recall–P50 / P95、recall–index memory 的 frontier（排除被標記的點，與主要讀值相同，010 §2–3）。
+
+    圖只呈現 frontier 的形狀；數字讀值以 report.md 的表為準（目標 recall 上的讀值不內插，010 §2）。
+    """
+    clean = report.get("clean_aggregates") or []
+    written = []
+    for n in sorted({a["n"] for a in clean}):
+        impls = [impl for impl in IMPL_STYLE if any(a["implementation"] == impl and a["n"] == n for a in clean)]
+        if not impls:
+            continue
+        fig, axes = plt.subplots(2, 2, figsize=(10, 7.5))
+        for ax, (metric, scale, label, higher) in zip(axes.flat, FRONTIER_PANELS):
+            for impl in impls:
+                front = pareto_front([a for a in clean if a["implementation"] == impl and a["n"] == n], metric, higher)
+                if front:
+                    _impl_line(ax, impl, [a["recall10"]["median"] for a in front],
+                               [a[metric]["median"] / scale for a in front])
+            for target in TARGETS:
+                ax.axvline(target, color="#b4b2aa", linestyle=":", linewidth=1)
+            if metric != "index_footprint_bytes":
+                ax.set_yscale("log")
+                _plain_log_ticks(ax.yaxis)
+            ax.set_xlabel("Recall@10 (median over seeds)", fontsize=8, color="#52514e")
+            ax.set_ylabel(label, fontsize=8, color="#52514e")
+            _style_axes(ax)
+        axes.flat[0].legend(fontsize=8, frameon=False)
+        fig.suptitle(f"{report['dataset']} ({report['mode']}): n={n}, recall frontiers over all (M, efC, ef); "
+                     "flagged points excluded", fontsize=10)
+        fig.tight_layout()
+        path = out_dir / f"frontier_n{n}.png"
+        fig.savefig(path, dpi=120)
+        plt.close(fig)
+        written.append(path)
+    return written
+
+
+def scaling_plots(report: dict, out_dir: Path, plt) -> list[Path]:
+    """scaling with N（010 §5）：固定 (M, efC) 的 build time 與 index memory，以及各目標 recall 的 QPS 讀值（主要讀值）。"""
+    rows = [s for s in report.get("scaling", []) if (s["m"], s["ef_construction"]) == AUX_SCALING_CELL]
+    ns = sorted({s["n"] for s in rows if s.get("build_ns")})  # 只有被標記 build 的 n 沒有主要讀值，不畫
+    if len(ns) < 2:
+        return []
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
+    m, efc = AUX_SCALING_CELL
+    for ax, (metric, scale, label) in zip(axes[:2], (("build_ns", 1e9, "build time (s)"),
+                                                     ("index_footprint_bytes", 2**20, "index memory, phys_footprint (MiB)"))):
+        for impl in IMPL_STYLE:
+            series = sorted((s for s in rows if s["implementation"] == impl and s.get(metric)), key=lambda s: s["n"])
+            if series:
+                _impl_line(ax, impl, [s["n"] for s in series], [s[metric]["median"] / scale for s in series])
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        _n_ticks(ax, ns)
+        _plain_log_ticks(ax.yaxis)
+        ax.set_xlabel("n", fontsize=8, color="#52514e")
+        ax.set_ylabel(f"{label}, (M, efC) = ({m}, {efc})", fontsize=8, color="#52514e")
+        _style_axes(ax)
+    ax = axes[2]
+    for impl in IMPL_STYLE:
+        per_n = report["frontier"].get(impl, {})
+        for target, linestyle in zip(("0.90", "0.95"), ("-", "--")):
+            pts = [(int(n), per_n[n][target]["main"]["qps"]["value"]) for n in sorted(per_n, key=int)
+                   if per_n[n][target]["main"].get("reached") and per_n[n][target]["main"].get("qps")]
+            if len(pts) >= 1:
+                style = IMPL_STYLE[impl]
+                ax.plot([p[0] for p in pts], [p[1] for p in pts], color=style["color"], marker=style["marker"],
+                        linestyle=linestyle, linewidth=2, markersize=5, markeredgecolor="#fcfcfb",
+                        label=f"{impl} @ {target}")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    _n_ticks(ax, sorted({int(n) for per_n in report["frontier"].values() for n, per_target in per_n.items()
+                         if any(entry["main"].get("reached") for entry in per_target.values())}))
+    _plain_log_ticks(ax.yaxis)
+    ax.set_xlabel("n", fontsize=8, color="#52514e")
+    ax.set_ylabel("QPS at target Recall@10 (frontier reading)", fontsize=8, color="#52514e")
+    ax.legend(fontsize=7, frameon=False)
+    _style_axes(ax)
+    axes[0].legend(fontsize=8, frameon=False)
+    fig.suptitle(f"{report['dataset']} ({report['mode']}): scaling with n; flagged builds and points excluded", fontsize=10)
+    fig.tight_layout()
+    path = out_dir / "scaling.png"
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return [path]
 
 
 def _load(run_dir) -> dict:
@@ -886,9 +1047,9 @@ def write_report(run_dirs, out_dir, excluded=(), roots=None) -> Path:
                              for d, r in zip(run_dirs, records)]
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    report["figures"] = [path.name for path in plots(report, out)]
     (out / "report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
     (out / "report.md").write_text(markdown(report), encoding="utf-8")
-    plots(report, out)
     return out
 
 
