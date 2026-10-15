@@ -1,9 +1,16 @@
 # NEXT
 
-## 目前狀態（2026-10-15 22:40 台灣時間 / 14:40 UTC，依 decision 017、018 重跑文字 1–4）
+## 目前狀態（2026-10-16 08:00 台灣時間 / 2026-10-16 00:00 UTC，文字 formal run 完成，Gate profiling 進行中）
 
 時間一律註明時區（台灣時間 = UTC+8）。
 
+- **文字 4 份全部 complete**（008-v4、高效能、140W）：1 `20261015T191333Z-formal`（2 個子 process `background`）、2 `20261015T210125Z-formal`、
+  3 `20261015T222221Z-formal`、4 `20261015T225545Z-formal`。報告 `results/reports/simplewiki-embeddinggemma2-100k/`（`--excluded` 7 個 run，所有檢查通過）。
+- **文字的 Gate 判讀（015）**：0.90 / 0.95 / 0.99 都是 `within_quantization`。frontier 比值 hnswlib ÷ rust = 1.10 / 1.06 / 0.90；同 ef 的 median 差 6–8%。
+  FAISS 快 2.9–4.5 倍。兩個資料集都不是 `gap` → SPEC Gate 的「有差距」不成立；是否適用特例由使用者判斷（見「目前需要使用者」）。
+- **Gate profiling**：計畫 `results/profiles/gate-{glove,text}-plan.sh`（GloVe ef 304 / 304 / 256、文字 ef 48 / 48 / 48），
+  由 scratchpad 的等待腳本在機器閒置後於同一次 heavy lock 下執行，log 在 `results/profiles/gate-run.log`；完成後 `gate_profile check`。
+- `report-figures` 已併回 main；README 的文字結果在分支 `text-results`（profiling 期間 repo 必須乾淨，profiling 完成後併回）。
 - **2026-10-11 14:15（台灣）使用者暫停全部工作；2026-10-15 22:15 恢復。**
 - **等待文字 run 期間（分支 `report-figures`，已 push，尚未併回 main）**：報告新增 recall–QPS / P50 / P95 / index memory 的 frontier 圖與 scaling 圖（SPEC 的 GitHub 最終成果）；README 新增 GloVe 的正式結果段落與 `docs/figures/glove-100-angular/`。文字 run 完成後先 `git merge --ff-only report-figures`、`./scripts/test.sh`、push，再產生文字報告。
 - **2026-10-15 的決定**（使用者）：Mac 改接 Apple 原廠 140W 變壓器 → decision 018 允許 70W 或 140W（同一個 run、同一份報告不得混用），協定 008-v4；
@@ -267,6 +274,8 @@
 ### 目前需要使用者
 
 - （已決定）文字的電力模式（016：高效能）、電量規則（017：取消）、變壓器（018：70W 或 140W）、開始時不看電量。
+- **是否進 Advanced**（Gate 證據齊全之後）：兩個資料集依 015 都不是 `gap`。選項：(a) 適用 SPEC 特例，Advanced 改聚焦 vector quantization frontier；
+  (b) 依看到結果之後的觀察（GloVe 同 ef 快 1.22–1.38 倍），以 profiling 的瓶頸作為 Advanced A / B 的假設；(c) 不進 Advanced。由使用者決定。
 - **GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
   是否在看過結果之後補跑 `glove-formal-8`（需另寫 decision，標明是看過結果之後、只因 hygiene 標記），由使用者決定；預設照實報告「只有含標記點的讀值」。
 - **Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。

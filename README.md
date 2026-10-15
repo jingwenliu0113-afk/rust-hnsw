@@ -22,14 +22,14 @@
   | 文字（768 維，正式資料集） | 100,000 | 16 / 200 | 約 0.77 → 0.97 → 0.996 |
 
   完整 GloVe 上，ann-benchmarks 自帶的 neighbors 與本專案以 exact search 產生的 ground truth 完全一致。
-- 正式 benchmark 進行中：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；閒置 load 量測為 `ok`。GloVe 的 8 份已完成並產生正式報告，文字 workload 的 4 份還要在 Mac heavy lock 下跑（見 `NEXT.md`）。Gate 的讀法在看任何結果之前登記（decision 015）。GloVe 的結果見下一節；文字 workload 與 Gate profiling 完成後再補上。
+- 正式 benchmark 進行中：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；閒置 load 量測為 `ok`。GloVe 的 8 份已完成並產生正式報告，文字 workload 的 4 份還要在 Mac heavy lock 下跑（見 `NEXT.md`）。Gate 的讀法在看任何結果之前登記（decision 015）。兩個資料集的正式結果見下兩節；Gate profiling 完成後補上時間花在哪。
 
 ## 正式結果：glove-100-angular（標準 ANN 資料集）
 
 條件：Apple M4 Pro（8P + 4E）、48 GB、macOS 27.0.1；協定 008-v2、高效能電力模式、Apple 70W、Mac heavy lock；三個實作都透過同一層
 Python batch interface、單執行緒（decision 002、008）。8 份 formal config（decision 013）、21 個 build × 3 個實作，完整報告由
 `benchmarks/report.py` 產生（`results/` 不進版控）。所有讀值依事先登記的 decision 010：id-based Recall@10、跨 seed median、
-frontier 取點不內插、有 hygiene 標記的點不進入主要讀值。文字 workload 的正式結果尚未完成（見 `NEXT.md`）。
+frontier 取點不內插、有 hygiene 標記的點不進入主要讀值。
 
 ![GloVe n=100k 的 recall frontier](docs/figures/glove-100-angular/frontier_n100000.png)
 
@@ -65,6 +65,45 @@ frontier 取點不內插、有 hygiene 標記的點不進入主要讀值。文�
 - 300k 的 rust-hnsw 在 ef 512 / 768 有 `load` 標記，0.95 在主要讀值中「未達到」（包含標記點時為 915 QPS @ ef 512）。
 - M = 8 的 rust-hnsw build（`background`）與 hnswlib 的全部點（`load`）被標記，兩者記憶體讀值的最小點因此落在 (16, 100)。
 - 單一 seed 的格點（300k、1,183,514、M8、M32、efC 100 / 400）沒有自己的 seed 範圍；variance 只在 (16, 200) 與 (48, 200)。
+
+## 正式結果：simplewiki-embeddinggemma2-100k（真實文字、768 維）
+
+條件：同一台 Mac；協定 008-v4（decision 016–018：高效能電力模式、Apple 140W、電量只記錄）、Mac heavy lock、單執行緒 batch。
+4 份 formal config、17 個 build × 3 個實作；先前因暫停、其他專案的負載、電力模式被改變與協定修訂而失敗或作廢的 7 個 run 都以 `--excluded` 列出（decision 016、017）。
+資料：Simple English Wikipedia 的 passage，以 `google/embeddinggemma-2` 產生 document embedding（decision 011、012），base 100,000、query 2,000。
+
+![文字 n=100k 的 recall frontier](docs/figures/simplewiki-embeddinggemma2-100k/frontier_n100000.png)
+
+**n = 100,000 的 frontier 讀值**（每格附上該點的 (M, efC, ef)；index memory 附 (M, efC)）：
+
+| 目標 Recall@10 | 實作 | QPS | P50 (µs) | P95 (µs) | index memory，phys_footprint (MiB) |
+| --- | --- | --- | --- | --- | --- |
+| 0.90 | rust-hnsw | 3,203（16 / 100 / 32） | 311（16 / 100 / 32） | 397（8 / 200 / 64） | 310.4（8 / 200） |
+| 0.90 | hnswlib | 3,509（8 / 200 / 64） | 285（8 / 200 / 64） | 362（8 / 200 / 64） | 316.4（8 / 200） |
+| 0.90 | faiss-hnsw | 10,290（8 / 200 / 48） | 99（8 / 200 / 48） | 129（8 / 200 / 48） | 306.4（8 / 200） |
+| 0.95 | rust-hnsw | 2,387（16 / 100 / 48） | 423（16 / 100 / 48） | 520（16 / 100 / 48） | 310.4（8 / 200） |
+| 0.95 | hnswlib | 2,541（16 / 100 / 48） | 400（16 / 100 / 48） | 490（16 / 100 / 48） | 316.4（8 / 200） |
+| 0.95 | faiss-hnsw | 6,811（16 / 100 / 48） | 152（16 / 100 / 48） | 182（16 / 100 / 48） | 306.4（8 / 200） |
+| 0.99 | rust-hnsw | 934（48 / 200 / 64） | 1,083（48 / 200 / 64） | 1,358（48 / 200 / 64） | 310.4（8 / 200） |
+| 0.99 | hnswlib | 844（32 / 200 / 96） | 1,203（32 / 200 / 96） | 1,468（32 / 200 / 96） | 316.4（8 / 200） |
+| 0.99 | faiss-hnsw | 2,692 [2,689, 2,699]（16 / 200 / 128） | 380（16 / 200 / 128） | 437（16 / 200 / 128） | 306.4（8 / 200） |
+
+- **QPS 比值**（frontier 讀值，n = 100k）：hnswlib ÷ rust-hnsw = 1.10 / 1.06 / 0.90，faiss-hnsw ÷ rust-hnsw = 3.21 / 2.85 / 2.88（0.90 / 0.95 / 0.99）。
+  n = 10k、30k 時 hnswlib ÷ rust-hnsw 為 1.03–1.07，faiss-hnsw ÷ rust-hnsw 為 2.9–4.5。
+- **variance 格點 (16, 200)**（5 個 seed；同一個 ef）：hnswlib 對 rust-hnsw 的 QPS median 為 3,276 對 3,103（ef 32）、2,439 對 2,299（ef 48）、799 對 743（ef 192），
+  median 相差 6–8%；seed 之間的範圍多半 < 1%（hnswlib 在 ef 48、192 為 6–7%）。
+- **Gate 的判讀（decision 015，事先登記）**：0.90 / 0.95 / 0.99 都是「在 ef 梯子的量化範圍內，無法區分」（主要目標 0.95：rust-hnsw [2,387, 3,203]、hnswlib [2,541, 3,401]）。
+- **recall 隨 efSearch**：三個實作在每個 (n, M, efC) 都沒有系統性惡化，最大相鄰下降 0。
+- **build time 與記憶體**（n = 100k，(16, 200) 的 median）：build 154.7 / 147.7 / 56.6 s，peak RSS 950 / 667 / 668 MiB，
+  index memory 318.8 / 323.3 / 312.5 MiB（rust-hnsw / hnswlib / faiss-hnsw；向量本身約 293 MiB）。
+  rust-hnsw 的 peak RSS 多出約一份資料，是 `add` 期間的正規化暫時副本（NEXT B1）。
+
+![文字的 scaling](docs/figures/simplewiki-embeddinggemma2-100k/scaling.png)
+
+**兩個資料集合起來（依 decision 015）**：兩個資料集的主要目標都不是「有差距」，所以 SPEC Gate 的「同 recall 下與 hnswlib 有差距」**不成立**；
+「無法區分」不等於「很接近 hnswlib」，是否適用 SPEC 的特例（Advanced 改聚焦 vector quantization）由使用者判斷。
+看到結果之後的描述（不是判讀）：100 維的 GloVe 上 hnswlib 在同 ef、同 recall 時快 1.22–1.38 倍，768 維的文字上只快 6–8%；FAISS 在兩者都最快（GloVe 1.6–2.2 倍、文字 2.9–4.5 倍）。
+Gate profiling（decision 015 §2）的結果補上之前，不對差距的來源下結論。
 
 ## 目錄
 
