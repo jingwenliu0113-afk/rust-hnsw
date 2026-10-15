@@ -22,7 +22,49 @@
   | 文字（768 維，正式資料集） | 100,000 | 16 / 200 | 約 0.77 → 0.97 → 0.996 |
 
   完整 GloVe 上，ann-benchmarks 自帶的 neighbors 與本專案以 exact search 產生的 ground truth 完全一致。
-- 正式 benchmark 進行中：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；閒置 load 量測為 `ok`。GloVe 的 8 份已完成並產生正式報告，文字 workload 的 4 份還要在 Mac heavy lock 下跑（見 `NEXT.md`）。Gate 的讀法在看任何結果之前登記（decision 015）；兩個資料集都完成、Gate profiling 之後再把結果寫進 README。
+- 正式 benchmark 進行中：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；閒置 load 量測為 `ok`。GloVe 的 8 份已完成並產生正式報告，文字 workload 的 4 份還要在 Mac heavy lock 下跑（見 `NEXT.md`）。Gate 的讀法在看任何結果之前登記（decision 015）。GloVe 的結果見下一節；文字 workload 與 Gate profiling 完成後再補上。
+
+## 正式結果：glove-100-angular（標準 ANN 資料集）
+
+條件：Apple M4 Pro（8P + 4E）、48 GB、macOS 27.0.1；協定 008-v2、高效能電力模式、Apple 70W、Mac heavy lock；三個實作都透過同一層
+Python batch interface、單執行緒（decision 002、008）。8 份 formal config（decision 013）、21 個 build × 3 個實作，完整報告由
+`benchmarks/report.py` 產生（`results/` 不進版控）。所有讀值依事先登記的 decision 010：id-based Recall@10、跨 seed median、
+frontier 取點不內插、有 hygiene 標記的點不進入主要讀值。文字 workload 的正式結果尚未完成（見 `NEXT.md`）。
+
+![GloVe n=100k 的 recall frontier](docs/figures/glove-100-angular/frontier_n100000.png)
+
+**n = 100,000 的 frontier 讀值**（每格附上該點的 (M, efC, ef)；QPS 有多個 seed 時附 [min, max]）：
+
+| 目標 Recall@10 | 實作 | QPS | P50 (µs) | P95 (µs) | index memory，phys_footprint (MiB) |
+| --- | --- | --- | --- | --- | --- |
+| 0.90 | rust-hnsw | 4,656 [4,011, 4,972]（48 / 200 / 64） | 219（48 / 200 / 64） | 266（16 / 400 / 128） | 102.8（16 / 100） |
+| 0.90 | hnswlib | 6,168（16 / 400 / 128） | 172（16 / 400 / 128） | 221（16 / 400 / 128） | 66.9（16 / 100） |
+| 0.90 | faiss-hnsw | 9,423 [8,787, 9,479]（48 / 200 / 64） | 114（48 / 200 / 64） | 143（16 / 200 / 128） | 50.9（8 / 200） |
+| 0.95 | rust-hnsw | 2,537 [2,334, 2,706]（48 / 200 / 128） | 414（48 / 200 / 128） | 491（16 / 400 / 256） | 102.8（16 / 100） |
+| 0.95 | hnswlib | 3,135 [3,032, 3,153]（48 / 200 / 128） | 318（16 / 400 / 256） | 394（16 / 400 / 256） | 66.9（16 / 100） |
+| 0.95 | faiss-hnsw | 5,650（32 / 200 / 128） | 184（32 / 200 / 128） | 223（32 / 200 / 128） | 55.8（16 / 400） |
+| 0.99 | rust-hnsw | 1,008（32 / 200 / 384） | 991（32 / 200 / 384） | 1,213（32 / 200 / 384） | 115.6（32 / 200） |
+| 0.99 | hnswlib | 1,363（32 / 200 / 384） | 797（32 / 200 / 384） | 1,064（32 / 200 / 384） | 80.3（32 / 200） |
+| 0.99 | faiss-hnsw | 1,654（32 / 200 / 384） | 561（32 / 200 / 384） | 701（32 / 200 / 384） | 69.6（32 / 200） |
+
+- **QPS 比值**（frontier 讀值）：hnswlib ÷ rust-hnsw = 1.32 / 1.24 / 1.35，faiss-hnsw ÷ rust-hnsw = 2.02 / 2.23 / 1.64（0.90 / 0.95 / 0.99）。
+- **Gate 的判讀（decision 015，事先登記）**：主要目標 0.95 為「在 ef 梯子的量化範圍內，無法區分」——rust-hnsw 的 QPS 範圍 [2,537, 3,234]、
+  hnswlib [3,135, 4,192] 重疊；0.90 為「不確定」（QPS 範圍分開，但交點前後的 seed 範圍沒有分開），0.99 也無法區分。
+  依 015，GloVe 上「同 recall 下與 hnswlib 有差距」**不成立**。
+- **看到結果之後的觀察（不是事先登記的判讀）**：在 variance 格點上，兩者在**同一個 ef** 達到目標、Recall@10 相同到小數第 3–4 位時，
+  5 組比較的 hnswlib seed 範圍都整段高於 rust-hnsw，median 比值 1.22–1.38。015 的規則刻意保守（容許 rust-hnsw 的交點落在更小的 ef），所以沒有判為有差距。
+- **recall 隨 efSearch**：三個實作在每個 (n, M, efC) 都沒有系統性惡化；rust-hnsw 與 hnswlib 在相同 (M, efC, ef) 的 recall 幾乎相同。
+- **build time 與記憶體**（(16, 200)，5 個 seed 的 median）：build 31.4 / 22.9 / 14.4 s，peak RSS 190 / 158 / 158 MiB，
+  index memory 104.9 / 68.1 / 58.2 MiB（rust-hnsw / hnswlib / faiss-hnsw）。rust-hnsw 的 peak RSS 包含 `add` 期間的一份正規化暫時副本（NEXT B1）。
+
+![GloVe 的 scaling](docs/figures/glove-100-angular/scaling.png)
+
+**限制（照實列出）**：
+
+- n = 1,183,514 的三個 build 都因其他專案沒有取 lock 的背景工作被標記 `background`，依 010 §3 沒有主要讀值；圖中的 scaling 只有 100k 與 300k。
+- 300k 的 rust-hnsw 在 ef 512 / 768 有 `load` 標記，0.95 在主要讀值中「未達到」（包含標記點時為 915 QPS @ ef 512）。
+- M = 8 的 rust-hnsw build（`background`）與 hnswlib 的全部點（`load`）被標記，兩者記憶體讀值的最小點因此落在 (16, 100)。
+- 單一 seed 的格點（300k、1,183,514、M8、M32、efC 100 / 400）沒有自己的 seed 範圍；variance 只在 (16, 200) 與 (48, 200)。
 
 ## 目錄
 
