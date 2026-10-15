@@ -143,3 +143,12 @@ profiler 已顯示時間主要花在哪。另有一個特例：Core 已很接近
 - **呈現**：seed 範圍表標示「不足 k」、註明其他 n 的代理範圍。
 - 補上測試，涵蓋存活的 mutation（median 與 min / max 落在目標兩側、邊界相等、錯的 n、缺格點、build 指令的完整參數等），
   修正後的 mutation 都被測試抓到。
+
+## 補記（2026-10-15，任何 Gate profiling 之前）：取樣與正式 run 比對的程式範圍
+
+- §2 原本要求「HEAD 與 formal run 之間的實作與量測程式（`report.py` 的 `MEASUREMENT_PATHS`）沒有差異」。decision 017、018 修改了 runner 的有效性規則
+  （`run.py`、`protocol.py`、`environment.py`），GloVe 的 formal run 是在修改之前，照原文 GloVe 的 Gate profiling 永遠無法通過核對。
+- 改為比對**被取樣的程式**：`gate_profile.PROFILED_PATHS`（`crates/`、`python/`、`Cargo.toml`、`Cargo.lock`、`requirements-dev.txt`、
+  `benchmarks/adapters.py`、`interface.py`、`datasets.py`、`metrics.py`）。runner 的有效性規則不在 profiling 的執行路徑上，不影響「時間花在哪」。
+  GloVe formal run（f077de9 起）到 017 之後的 HEAD，這些路徑沒有任何差異（有測試）。
+- 電力條件依 017、018（不看電量；70W 或 140W）。

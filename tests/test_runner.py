@@ -845,6 +845,7 @@ def test_formal_preflight_runs_every_check(passing_environment):
     assert checks["extension_sha256"] == {"rust_hnsw": "1", "hnswlib": "2", "faiss": "3"}
     # 014：電力條件寫進 formal_checks，run 開始時的電力模式供之後的重新確認比較（電量只記錄，decision 017）。
     assert checks["power"]["powermode"] == 0 and context["powermode"] == 0 and "battery_peak" not in context
+    assert context["adapter"] == FORMAL_POWER["adapter"]  # 018：變壓器在 run 內不得更換
 
 
 @pytest.mark.parametrize("name", PREFLIGHT_CHECKS)
@@ -875,6 +876,11 @@ def test_formal_recheck_checks_the_real_power_conditions(passing_environment, mo
     monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "power_source": "Battery Power"})
     with pytest.raises(PreflightError, match="AC power"):
         run_module.formal_recheck(recheck_context())
+    big = {"manufacturer": "Apple Inc.", "name": "140W USB-C Power Adapter"}
+    monkeypatch.setattr(environment, "power_state", lambda: {**FORMAL_POWER, "adapter": big})
+    run_module.formal_recheck(recheck_context())  # 沒有記錄 run 開始時的變壓器（測試的假 preflight）：只檢查允許清單
+    with pytest.raises(PreflightError, match="adapter changed"):
+        run_module.formal_recheck({**recheck_context(), "adapter": FORMAL_POWER["adapter"]})
 
 
 def test_the_real_readers_exclude_the_runner_and_its_ancestors(monkeypatch):
@@ -909,7 +915,7 @@ def test_formal_recheck_detects_each_change(passing_environment, monkeypatch, ch
     elif change == "faiss":
         digests["c"] = "changed"
     elif change == "power":
-        def changed(state, powermode=None):
+        def changed(state, powermode=None, adapter=None):
             raise PreflightError(f"pmset powermode changed during the run: {powermode} -> 2")
         monkeypatch.setattr(environment, "check_formal_power", changed)
     else:

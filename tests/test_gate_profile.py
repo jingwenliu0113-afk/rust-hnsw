@@ -194,7 +194,7 @@ def test_measurement_code_must_be_unchanged_since_the_formal_runs(tmp_path):
         return ["crates/hnsw/src/search.rs"]
 
     results = check(formal_records(), profiles=tmp_path, changed_files=changed)
-    assert all(any("measurement code differs" in p for p in r["problems"]) for r in results)
+    assert all(any("profiled code differs" in p for p in r["problems"]) for r in results)
     assert calls[0] == (FORMAL_COMMIT, "a" * 40)
 
 
@@ -221,8 +221,19 @@ def test_cli_plan_and_check(tmp_path, capsys, monkeypatch):
     profiles = tmp_path / "profiles"
     profiles.mkdir()
     monkeypatch.setattr(gate_profile, "PROFILES", profiles)
-    monkeypatch.setattr(gate_profile, "changed_measurement_files", lambda a, b: [])
+    monkeypatch.setattr(gate_profile, "changed_profiled_files", lambda a, b: [])
     write_samples(profiles)
     assert gate_profile.main(["check", str(run_dir)]) == 0
     write_samples(profiles, {("hnswlib", "build"): {"lock": {"held_by_ancestor": False}}})
     assert gate_profile.main(["check", str(run_dir)]) == 1
+
+
+def test_only_the_profiled_code_is_compared_with_the_formal_commits():
+    # 017 改了 runner 的有效性規則（run.py、protocol.py、environment.py），但被取樣的程式沒有變（015 補記）。
+    assert gate_profile.changed_profiled_files("f077de9", "41e4ea0") == []
+    for path in ("benchmarks/run.py", "benchmarks/protocol.py", "benchmarks/environment.py", "benchmarks/profile.py"):
+        assert path not in gate_profile.PROFILED_PATHS
+    # ddcb27d → 7961673 新增了 HNSW（crates/）：真的有差異時要列出。
+    assert any(name.startswith("crates/") for name in gate_profile.changed_profiled_files("ddcb27d", "7961673"))
+    with pytest.raises(PlanError, match="cannot compare"):
+        gate_profile.changed_profiled_files("0" * 40, "41e4ea0")

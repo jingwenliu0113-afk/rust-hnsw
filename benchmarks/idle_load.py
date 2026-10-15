@@ -165,7 +165,7 @@ def main(argv=None) -> int:
     end_power = environment.power_state()
     power_error = None
     try:
-        environment.check_formal_power(end_power, powermode=power["powermode"])
+        environment.check_formal_power(end_power, powermode=power["powermode"], adapter=power["adapter"])
     except environment.PreflightError as err:
         status, power_error = "invalid_power", str(err)
     record = {

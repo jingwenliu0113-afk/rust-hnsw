@@ -149,3 +149,4 @@ Gate profiling（decision 015：依正式 run 選各實作 Recall@10 ≥ 0.95 �
 - [015 Gate 證據的讀法與 Gate profiling 的參數（事先登記）](docs/decisions/015-gate-evidence.md)
 - [016 文字 workload 的電力模式不一致：作廢 text-formal-2、3，全部以高效能模式重跑](docs/decisions/016-text-power-mode-voided-runs.md)
 - [017 取消電量下降的作廢規則（協定 008-v3）](docs/decisions/017-remove-battery-drop-rule.md)
+- [018 允許 Apple 原廠 140W 變壓器（協定 008-v4）](docs/decisions/018-allow-140w-adapter.md)

@@ -44,7 +44,7 @@ VOIDED_RUNS = {
     "20261010T195251Z-formal": "decision 016: run in automatic power mode (0) after the same outside change; the text workload stays "
                                "in high-performance mode",
     "20261010T112849Z-formal": "decision 017: run under protocol 008-v2 (battery-drop rule); the user removed that rule, so the text "
-                               "workload is rerun under 008-v3 and a report cannot merge the two versions",
+                               "workload is rerun under the later protocol (008-v4, decision 018) and a report cannot merge versions",
 }
 REPO = Path(__file__).resolve().parents[1]
 # 實作與量測程式：合併的 run 之間（不同 commit 時）這些路徑不得有差異（013 §5）。
@@ -485,7 +485,9 @@ def _check_mergeable(records: list[dict], labels: list[str], changed_files) -> N
                               ("package versions", lambda m: m["versions"]),
                               ("rust_hnsw.BUILD_INFO", lambda m: m["build_info"]),
                               # 014 補記：允許自動或高效能電力模式，但一份報告只合併同一個模式的 run。
-                              ("the power mode", lambda m: ((m.get("formal_checks") or {}).get("power") or {}).get("powermode"))):
+                              ("the power mode", lambda m: ((m.get("formal_checks") or {}).get("power") or {}).get("powermode")),
+                              # 018：70W 與 140W 都允許，但一份報告只合併同一個變壓器的 run。
+                              ("the power adapter", lambda m: ((m.get("formal_checks") or {}).get("power") or {}).get("adapter"))):
             if getter(meta) != getter(first):
                 raise ReportError(f"{label} differs from {labels[0]} in {field}")
         commit_a, commit_b = first["git"]["commit"], meta["git"]["commit"]

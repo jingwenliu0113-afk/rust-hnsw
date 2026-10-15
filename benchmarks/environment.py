@@ -334,16 +334,20 @@ def power_state() -> dict:
             "battery": parse_battery(batt)}
 
 
-def check_formal_power(state: dict, powermode: int | None = None) -> None:
-    """decision 014 與補記：AC 電源、允許的電力模式（`powermode` 給定時必須與它相同）、Apple 原廠 70W 變壓器。
+def check_formal_power(state: dict, powermode: int | None = None, adapter: dict | None = None) -> None:
+    """decision 014 與補記：AC 電源、允許的電力模式（`powermode` 給定時必須與它相同）、
+    Apple 原廠 70W 或 140W 變壓器（decision 018；`adapter` 給定時必須與它相同）。
     電量只記錄，不再是條件（decision 017 取消 014 的電量下降規則）。"""
     check_ac_power(state["power_source"])
     if state["powermode"] not in protocol.FORMAL_POWERMODES:
         raise PreflightError(f"formal runs need pmset powermode in {protocol.FORMAL_POWERMODES}, currently {state['powermode']!r}")
     if powermode is not None and state["powermode"] != powermode:
         raise PreflightError(f"pmset powermode changed during the run: {powermode} -> {state['powermode']}")
-    if state["adapter"] != protocol.FORMAL_ADAPTER:
-        raise PreflightError(f"formal runs need the {protocol.FORMAL_ADAPTER}, currently {state['adapter']!r}")
+    if state["adapter"] not in protocol.FORMAL_ADAPTERS:
+        raise PreflightError(f"formal runs need one of {[a['name'] for a in protocol.FORMAL_ADAPTERS]}, "
+                             f"currently {state['adapter']!r}")
+    if adapter is not None and state["adapter"] != adapter:
+        raise PreflightError(f"power adapter changed during the run: {adapter['name']} -> {state['adapter']}")
 
 
 def background_processes(exclude=(), threshold: float = protocol.BACKGROUND_PCPU) -> list[dict]:

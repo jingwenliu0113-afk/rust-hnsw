@@ -12,7 +12,8 @@
   計畫一開始就拒絕覆寫已存在的同名輸出：上一次嘗試的檔案要先移開，不得混進新的證據。
 - `check`：每個（實作、階段）的取樣前紀錄、`sample` 原始報告與排行都存在，而且取樣晚於紀錄；
   紀錄的參數與計畫完全相同、由祖先持有 heavy lock、通過 formal 的電力與背景條件（014 補記）、git 乾淨、
-  與正式 run 之間的實作與量測程式沒有差異、`rust_hnsw.BUILD_INFO` 與套件版本相同；
+  與正式 run 之間被取樣的程式（`PROFILED_PATHS`：實作、binding、adapter、資料載入與 recall 計算）沒有差異、
+  `rust_hnsw.BUILD_INFO` 與套件版本相同；
   search 階段的 Recall@10 與正式 run 同一個 build 的選定點完全相同（同一個 `metrics.recall_at_k`，三個實作的 build 在相同 seed 下都是確定的）。
   不符時照實列出，該取樣不得作為 Gate 證據，直到查明原因。
 """
@@ -20,10 +21,9 @@
 import argparse
 import json
 import shlex
+import subprocess
 import sys
 from pathlib import Path
-
-from benchmarks.report import changed_measurement_files
 
 REPO = Path(__file__).resolve().parents[1]
 PROFILES = REPO / "results" / "profiles"
@@ -36,6 +36,10 @@ IMPLEMENTATIONS = ("rust-hnsw", "hnswlib", "faiss-hnsw")
 SHORT_NAMES = {"glove-100-angular": "glove", "simplewiki-embeddinggemma2-100k": "text"}
 OUTPUT_SUFFIXES = (".json", ".log", ".sample.txt", ".top.txt")
 COMPARED_VERSIONS = ("hnswlib", "faiss-cpu", "numpy")
+# 015 補記（2026-10-15）：與正式 run 比較的是被取樣的程式路徑。runner 的有效性規則（run.py、protocol.py、environment.py）
+# 在 017、018 之後已改過，但它們不在 profiling 的執行路徑上，不影響「時間花在哪」。
+PROFILED_PATHS = ("crates", "python", "Cargo.toml", "Cargo.lock", "requirements-dev.txt", "benchmarks/adapters.py",
+                  "benchmarks/interface.py", "benchmarks/datasets.py", "benchmarks/metrics.py")
 
 
 class PlanError(ValueError):
@@ -122,6 +126,16 @@ def plan_script(records: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def changed_profiled_files(commit_a: str, commit_b: str, repo=REPO) -> list[str]:
+    """兩個 commit 之間，被取樣的程式（PROFILED_PATHS）有差異的檔案。"""
+    try:
+        out = subprocess.run(["git", "diff", "--name-only", commit_a, commit_b, "--", *PROFILED_PATHS],
+                             cwd=repo, check=True, capture_output=True, text=True).stdout
+    except (OSError, subprocess.CalledProcessError) as err:
+        raise PlanError(f"cannot compare commits {commit_a} and {commit_b}: {err}") from err
+    return out.split()
+
+
 def _check_one(records, dataset, impl, phase, selected, profiles, changed_files) -> dict:
     stem = Path(profiles) / profile_name(dataset, impl, phase)
     result = {"implementation": impl, "phase": phase, "problems": []}
@@ -155,7 +169,7 @@ def _check_one(records, dataset, impl, phase, selected, profiles, changed_files)
         for commit in sorted({r["metadata"]["git"]["commit"] for r in records}):
             changed = changed_files(commit, git["commit"])
             if changed:
-                problems.append(f"implementation or measurement code differs from formal commit {commit[:12]}: {changed}")
+                problems.append(f"profiled code differs from formal commit {commit[:12]}: {changed}")
     if any(meta.get("build_info") != r["metadata"]["build_info"] for r in records):
         problems.append("rust_hnsw.BUILD_INFO differs from the formal run")
     versions = meta.get("versions", {})
@@ -175,7 +189,7 @@ def _check_one(records, dataset, impl, phase, selected, profiles, changed_files)
 def check(records: list[dict], profiles=None, changed_files=None) -> list[dict]:
     """每個（實作、階段）的取樣是否符合 015 §2 的證據條件；`changed_files(a, b)` 預設以 git 比較（測試可替換）。"""
     profiles = PROFILES if profiles is None else profiles
-    changed_files = changed_measurement_files if changed_files is None else changed_files
+    changed_files = changed_profiled_files if changed_files is None else changed_files
     dataset = _check_records(records)
     selected = select_ef(records)
     return [_check_one(records, dataset, impl, phase, selected, profiles, changed_files)

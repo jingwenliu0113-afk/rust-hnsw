@@ -1,13 +1,16 @@
 # NEXT
 
-## 目前狀態（2026-10-11 13:10 台灣時間 / 05:10 UTC，依 decision 017 重跑文字 1–4）
+## 目前狀態（2026-10-15 22:40 台灣時間 / 14:40 UTC，依 decision 017、018 重跑文字 1–4）
 
 時間一律註明時區（台灣時間 = UTC+8）。
 
+- **2026-10-11 14:15（台灣）使用者暫停全部工作；2026-10-15 22:15 恢復。**
+- **2026-10-15 的決定**（使用者）：Mac 改接 Apple 原廠 140W 變壓器 → decision 018 允許 70W 或 140W（同一個 run、同一份報告不得混用），協定 008-v4；
+  開始時不再看電量（電池停在 80%「not charging」）。
+- **015 補記**：Gate profiling 與正式 run 的比對改為被取樣的程式（`PROFILED_PATHS`），否則 017 / 018 對 runner 的修改會讓 GloVe 的 profiling 永遠無法核對。
 - **2026-10-11 的決定**（使用者）：
   - 04:55（台灣）decision 016：文字全部用高效能模式；text-2、3（自動模式）作廢。
-  - 10:25（台灣）：使用者在跑其他工作，指示電量到 90% 再繼續（排程條件）。11:33 開始重跑 text-2，12:47 因電量從 100% 回落到 97%（充滿後 `AC attached`）invalid。
-  - 12:55（台灣）decision 017：**取消電量下降的作廢規則**，協定改為 008-v3。text-1（008-v2）作廢，文字 4 份全部重跑（約 5 h）。
+  - 12:55（台灣）decision 017：取消電量下降的作廢規則。text-1（008-v2）作廢，文字 4 份全部重跑（約 5 h）。
 - **暫停與恢復（10-10）**：01:50 暫停、10:10 恢復；17:58 暫停（中止 text-1）、18:53 恢復；19:25 前後 `xcode-select` 被切回壞掉的 Xcode（B3 復發），
   以 `DEVELOPER_DIR` 繞過，之後使用者切回 Command Line Tools。
 - **formal run 進度**：
@@ -25,8 +28,8 @@
     - `pmset -g custom` 顯示 AC 的 powermode 設定已改為 0（自動），不是本專案改的。結束時電池 93%、「AC attached; not charging」。
   - **decision 016、017** 之後：文字的有效 run 都要是 008-v3、高效能模式。作廢登記在 `report.py` 的 `VOIDED_RUNS`；
     文字報告的 `--excluded` 共 7 個 run（見 017「對實驗的影響」）。
-  - 下一步：`./scripts/test.sh` → 電量 ≥ 90% 後 `./scripts/formal_launcher.sh results/batches/text-6.log 28800 --powermode 2 --skip-idle`
-    `text-formal-1 … text-formal-4`（約 5 h）→ Gate profiling（015 §2）→ 文字報告。
+  - 下一步：`./scripts/test.sh` → `./scripts/formal_launcher.sh results/batches/text-6.log 28800 --powermode 2 --skip-idle`
+    `text-formal-1 … text-formal-4`（約 5 h，008-v4、140W）→ Gate profiling（015 §2 與補記）→ 文字報告。
 
 - **GloVe 正式報告**（`results/reports/glove-100-angular/`，8 個 run，所有 013 §5 的檢查通過）。重點（n = 100,000，Recall@10）：
   - **recall 隨 ef**：三個實作在每個 (n, M, efC) 都沒有系統性惡化，最大相鄰下降 0。Rust 與 hnswlib 在相同 (M, efC, ef) 的 recall 幾乎相同
@@ -46,7 +49,7 @@
 
 ## 目前位置
 
-**Core：除了文字 workload 的正式 run（依 decision 017 重跑 1–4）、Gate profiling 與文字報告之外都已完成；GloVe 的正式 run 與報告已完成**：
+**Core：除了文字 workload 的正式 run（依 decision 017、018 重跑 1–4）、Gate profiling 與文字報告之外都已完成；GloVe 的正式 run 與報告已完成**：
 
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
   hnswlib / FAISS adapters（007）、benchmark runner（008，含實作後審查）、比較規則（010）、報告腳本。
@@ -262,7 +265,7 @@
 
 ### 目前需要使用者
 
-- （已決定）文字的電力模式（016：高效能）與電量規則（017：取消）。
+- （已決定）文字的電力模式（016：高效能）、電量規則（017：取消）、變壓器（018：70W 或 140W）、開始時不看電量。
 - **GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
   是否在看過結果之後補跑 `glove-formal-8`（需另寫 decision，標明是看過結果之後、只因 hygiene 標記），由使用者決定；預設照實報告「只有含標記點的讀值」。
 - **Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。

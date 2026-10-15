@@ -529,6 +529,17 @@ def test_every_memory_table_puts_phys_footprint_before_rss():
     assert scaling_row.index("286.1") < scaling_row.index("476.8")
 
 
+def test_formal_runs_with_different_power_adapters_are_not_merged():
+    # decision 018：70W 與 140W 都允許，但一份報告只合併同一個變壓器的 run。
+    def record(name, seed):
+        meta = make_metadata()
+        meta["formal_checks"] = {"power": {"powermode": 2, "adapter": {"manufacturer": "Apple Inc.", "name": name}}}
+        return make_record([curve("rust-hnsw", RUST_CURVE, seed=seed)], metadata=meta)
+    build_report([record("70W USB-C Power Adapter", 1), record("70W USB-C Power Adapter", 2)])
+    with pytest.raises(ReportError, match="power adapter"):
+        build_report([record("70W USB-C Power Adapter", 1), record("140W USB-C Power Adapter", 2)])
+
+
 def test_runs_from_different_commits_merge_only_without_code_changes():
     first = make_record([curve("rust-hnsw", RUST_CURVE, seed=1)], metadata=make_metadata(commit="a" * 40))
     second = make_record([curve("rust-hnsw", RUST_CURVE, seed=2)], metadata=make_metadata(commit="b" * 40))

@@ -8,7 +8,8 @@ from benchmarks.metrics import TIE_EPS
 
 # 008-v2：使用者 2026-10-09 的決定（decision 014）：formal 的電力條件、背景 heavy workload 的 gate、index memory 改以 phys_footprint 為主。
 # 008-v3：使用者 2026-10-11 的決定（decision 017）：取消電量下降的作廢規則，電量只記錄。
-PROTOCOL_VERSION = "008-v3"
+# 008-v4：使用者 2026-10-15 的決定（decision 018）：Apple 原廠 70W 或 140W 變壓器皆可；同一個 run 內不得更換。
+PROTOCOL_VERSION = "008-v4"
 
 # 主要量測的 k；Recall@1 另外以 k = 1 的整批 search 取得（008 §7）。
 K = 10
@@ -45,10 +46,14 @@ MEMORY_ABSOLUTE_BYTES = 1 << 20
 
 LOCK_DIR = "/tmp/ai-portfolio-mac-heavy.lock"
 
-# 014：formal run 的電力條件（使用者決定）：自動（0）或高效能（2）電力模式、Apple 原廠 70W 變壓器、接 AC。
-# 同一個 run 內電力模式不得改變；報告不合併不同電力模式的 run（014 補記）。
+# 014：formal run 的電力條件（使用者決定）：自動（0）或高效能（2）電力模式、Apple 原廠變壓器、接 AC。
+# 同一個 run 內電力模式與變壓器都不得改變；報告不合併不同電力模式或不同變壓器的 run（014 補記、018）。
 FORMAL_POWERMODES = (0, 2)
-FORMAL_ADAPTER = {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"}
+# 018：014 原本只允許 70W；使用者 2026-10-15 改為 70W 或 140W 皆可。
+FORMAL_ADAPTERS = (
+    {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"},
+    {"manufacturer": "Apple Inc.", "name": "140W USB-C Power Adapter"},
+)
 # 017（使用者決定）：取消 014 的電量下降規則（接 AC 時 macOS 充滿後讓電量回落幾點是正常的電池管理，不影響 CPU 速度）；
 # 電量照常記錄（power_samples），不再是 run 是否有效的條件。協定版本因此改為 008-v3。
 # 014：背景 heavy workload（自己、祖先與受測子 process 以外；%CPU 以 100 = 一個 core）：
@@ -86,7 +91,7 @@ def protocol_record() -> dict:
         "single_thread_tolerance": {"relative": SINGLE_THREAD_RELATIVE, "absolute_s": SINGLE_THREAD_ABSOLUTE_S},
         "memory_tolerance": {"relative": MEMORY_RELATIVE, "absolute_bytes": MEMORY_ABSOLUTE_BYTES},
         "formal_powermodes": list(FORMAL_POWERMODES),
-        "formal_adapter": dict(FORMAL_ADAPTER),
+        "formal_adapters": [dict(a) for a in FORMAL_ADAPTERS],
         "battery_rule": "recorded only (decision 017)",
         "background_pcpu": BACKGROUND_PCPU,
         "background_command_pcpu": BACKGROUND_COMMAND_PCPU,

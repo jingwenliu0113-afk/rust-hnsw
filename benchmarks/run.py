@@ -104,7 +104,8 @@ def formal_preflight(context: dict) -> dict:
     environment.check_formal_power(power)
     digests = environment.check_dataset_registered(context["dataset"])
     # 014 補記：電力模式在 run 內不得改變。電量只記錄（decision 017）。
-    context.update(owner=owner, head=head, extension_sha256=_extension_digests(), powermode=power["powermode"])
+    context.update(owner=owner, head=head, extension_sha256=_extension_digests(), powermode=power["powermode"],
+                   adapter=power["adapter"])
     return {"lock_owner": owner, "head": head, "config": config, "extension_sha256": context["extension_sha256"],
             "dataset_sha256": digests,
             "power": {key: power[key] for key in ("power_source", "powermode", "adapter", "adapter_watts", "battery")}}
@@ -132,7 +133,7 @@ def formal_recheck(context: dict) -> None:
 
 def check_power(context: dict, state: dict) -> None:
     """014 的電力條件，電力模式須與 run 開始時相同（formal_preflight 寫入 context；測試的假 preflight 沒有時只檢查條件本身）。"""
-    environment.check_formal_power(state, powermode=context.get("powermode"))
+    environment.check_formal_power(state, powermode=context.get("powermode"), adapter=context.get("adapter"))
 
 
 def read_background() -> list[dict]:

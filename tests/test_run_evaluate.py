@@ -10,9 +10,9 @@ from helpers import random_unit, tie_data
 
 
 def test_protocol_constants_match_decision_008():
-    """改動任何一項都必須另寫 decision log（008「對實驗的影響」；008-v2 見 decision 014，008-v3 見 decision 017）。"""
+    """改動任何一項都必須另寫 decision log（008「對實驗的影響」；008-v2 見 decision 014，008-v3 見 decision 017，008-v4 見 decision 018）。"""
     assert protocol.protocol_record() == {
-        "version": "008-v3",
+        "version": "008-v4",
         "k": 10,
         "recall_at_1_k": 1,
         "batch_warmup_calls": 1,
@@ -31,7 +31,8 @@ def test_protocol_constants_match_decision_008():
         "single_thread_tolerance": {"relative": 0.02, "absolute_s": 0.001},
         "memory_tolerance": {"relative": 0.02, "absolute_bytes": 1 << 20},
         "formal_powermodes": [0, 2],
-        "formal_adapter": {"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"},
+        "formal_adapters": [{"manufacturer": "Apple Inc.", "name": "70W USB-C Power Adapter"},
+                            {"manufacturer": "Apple Inc.", "name": "140W USB-C Power Adapter"}],
         "battery_rule": "recorded only (decision 017)",
         "background_pcpu": 50.0,
         "background_command_pcpu": 100.0,

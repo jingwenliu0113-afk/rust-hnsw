@@ -486,6 +486,15 @@ def test_formal_power_accepts_the_registered_conditions():
     environment.check_formal_power({**FORMAL_POWER, "battery": None})  # 沒有電池的機器
 
 
+def test_the_140w_adapter_is_allowed_but_must_not_change_during_a_run():
+    # decision 018：Apple 原廠 70W 或 140W 皆可；同一個 run 內不得更換。
+    big = {"manufacturer": "Apple Inc.", "name": "140W USB-C Power Adapter"}
+    environment.check_formal_power({**FORMAL_POWER, "adapter": big, "adapter_watts": 94})
+    environment.check_formal_power({**FORMAL_POWER, "adapter": big}, adapter=big)
+    with pytest.raises(PreflightError, match="adapter changed during the run"):
+        environment.check_formal_power({**FORMAL_POWER, "adapter": big}, adapter=FORMAL_POWER["adapter"])
+
+
 @pytest.mark.parametrize("battery", [{"percent": 96, "state": "AC attached"}, {"percent": 40, "state": "charging"},
                                      {"percent": 90, "state": "discharging"}])
 def test_battery_level_is_not_a_formal_condition(battery):
@@ -497,7 +506,7 @@ def test_battery_level_is_not_a_formal_condition(battery):
     ({"power_source": "Battery Power"}, "AC power"),
     ({"powermode": 1}, "powermode"),   # 低耗電模式
     ({"powermode": None}, "powermode"),  # pmset 沒有 powermode 這一行
-    ({"adapter": {"manufacturer": "Apple Inc.", "name": "140W USB-C Power Adapter"}}, "70W"),
+    ({"adapter": {"manufacturer": "Apple Inc.", "name": "96W USB-C Power Adapter"}}, "70W"),  # 018 只允許 70W 與 140W
     ({"adapter": None}, "70W"),
     ({"adapter": {"manufacturer": "Other Inc.", "name": "70W USB-C Power Adapter"}}, "70W"),
 ])
