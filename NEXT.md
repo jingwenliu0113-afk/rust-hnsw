@@ -5,6 +5,7 @@
 時間一律註明時區（台灣時間 = UTC+8）。
 
 - **2026-10-11 14:15（台灣）使用者暫停全部工作；2026-10-15 22:15 恢復。**
+- **等待文字 run 期間（分支 `report-figures`，已 push，尚未併回 main）**：報告新增 recall–QPS / P50 / P95 / index memory 的 frontier 圖與 scaling 圖（SPEC 的 GitHub 最終成果）；README 新增 GloVe 的正式結果段落與 `docs/figures/glove-100-angular/`。文字 run 完成後先 `git merge --ff-only report-figures`、`./scripts/test.sh`、push，再產生文字報告。
 - **2026-10-15 的決定**（使用者）：Mac 改接 Apple 原廠 140W 變壓器 → decision 018 允許 70W 或 140W（同一個 run、同一份報告不得混用），協定 008-v4；
   開始時不再看電量（電池停在 80%「not charging」）。
 - **015 補記**：Gate profiling 與正式 run 的比對改為被取樣的程式（`PROFILED_PATHS`），否則 017 / 018 對 runner 的修改會讓 GloVe 的 profiling 永遠無法核對。
