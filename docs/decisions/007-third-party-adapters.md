@@ -223,3 +223,23 @@ Rust 是否要以 `target-cpu=native` 編譯屬於 benchmark protocol，在 008 
 
 **兩位反駁者意見相反的一項**：search 時是否檢查 query 的 dtype / layout。
 折衷為由 runner 在計時前檢查一次（§1），adapter 的 search 不檢查。
+
+## 補記（2026-10-17，Advanced C 的實作之後、任何真實資料上的量化結果之前）：`IndexHNSWSQ` 與 Q 的移植
+
+decision 019 的 `faiss-hnsw-sq8`（Q）把 `FaissHnsw` 建出的 Flat graph 移植進 `IndexHNSWSQ`，不用 FAISS 以量化距離建圖。
+細節見 019 的補記（2026-10-17）第 2 節；以下是 `tests/test_third_party_semantics.py` 新增的 [測試] 事實：
+
+- **SQ storage**：
+  - 必須先 train，否則 add 拋出 `is_trained` 錯誤。
+  - QT_8bit、RS_minmax、`rangestat_arg = 0` 時，`trained` 等於逐維的 min 與 max − min。
+  - vdiff = 0 的維度 code 為 0、解碼為 vmin；n = 1 時重建與原向量逐位元相同。
+- **search 的輸出**：
+  - similarity 可略大於 1（實測約 1.0039），也可小於 −1。adapter 以 `np.clip(1 − ip, 0, 2)` 轉成距離，這是 Q 在計時路徑上比 `FaissHnsw` 多出的一步。
+  - padding 是 −1 / −FLT_MAX，adapter 改成 +inf。
+  - `efSearch` 的語意與 Flat 相同；同 seed 時結果是決定性的。
+  - 在 `omp_set_num_threads(1)` 下，train、add、移植與 search 都是單執行緒。
+- **移植**：
+  - 複製 `hnsw`（levels、offsets、neighbors、entry_point、max_level）並設 `ntotal`；storage train、add 之後，設 `is_trained = True`。
+  - 只 train storage 時，外層 `is_trained` 仍是 False。
+  - 移植是深複製，改動或釋放 Flat 都不影響 Q；`write_index` / `read_index` 之後 graph 與結果逐位元相同。
+- **定案**：移植在 synthetic 測試上全部通過，判定可行。019 §3 的備案（原生 `IndexHNSWSQ`）不採用，之後也不得改用。

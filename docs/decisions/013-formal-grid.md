@@ -323,6 +323,15 @@
 - §3 第 1 點（讀值所在點的 build 數與跨 seed min–max）與第 2 點（variance 格點在各實作最小達標 ef 上的 seed 範圍，含 fallback）原本沒有在報告中輸出，
   由 decision 015 §3 補上（`variance_ranges`）。variance 格點與目標的對應照 §3 原文，不改任何讀值的定義。
 
+## 補記（2026-10-17，Advanced C 的實作之後、任何真實資料上的量化結果之前）：C 的 config
+
+- decision 019 的 12 份 config（10 份 formal、2 份 smoke）不在本文件的登記表中。
+  - C 的報告以 `quant_report.QUANT_CONFIGS` 登記 10 份 formal，呼叫 `report.check_formal_set(..., registry=QUANT_CONFIGS)`。
+  - Core 的報告預設仍用 `FORMAL_CONFIGS`，所以兩份報告互不合併對方的 run，由測試保證。
+- 「同一資料集的 ef 清單逐字相同」只在 C 內成立。C 的 ef 清單見 019 §5。
+- timeout 公式對超過 3 個實作的重述見 019 §5。
+- 以上只適用於 019 的 C run，不改變 Core 的讀值與判讀。
+
 ## 附錄：文字的 formal config（逐字登記）
 
 與 `simplewiki-embeddinggemma2-100k` 的 manifest 同一個 commit 加入 `benchmarks/configs/`，內容必須與以下完全相同（唯一例外：依第 6 點上調的 `child_timeout_s`）。

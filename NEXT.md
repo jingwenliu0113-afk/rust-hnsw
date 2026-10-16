@@ -1,8 +1,27 @@
 # NEXT
 
-## 目前狀態（2026-10-16 11:40 台灣時間 / 03:40 UTC，Core 完成，等使用者決定是否進 Advanced）
+## 目前狀態（2026-10-17 台灣時間，Advanced C：實作與審查完成，下一步是真實資料的 correctness smoke）
 
 時間一律註明時區（台灣時間 = UTC+8）。
+
+- **Advanced C 的進度**（decision 019 §9）：
+  1. ✔ 事先登記：4c5cbc2（分支 `prereg-quant`，已併回 main）。
+  2. ✔ golden test：9cfc35f，在任何 C 的程式之前。
+  3. ✔ 實作與獨立審查：實作 dca22c9。
+     - 分 5 個階段，每階段都跑 test.sh；之後三位審查者從忠實度、Core 隔離、測試鑑別力三個角度檢查，提出 20 個 findings：18 個修正，2 個寫成補記。
+     - 全程只用 synthetic 資料。
+  4. ✔ test.sh 與前提檢查（019 的補記，2026-10-17）：
+     - test.sh：pytest 1024 passed、3 skipped。
+     - H1 前提（反組譯）**成立**：`results/quant/premise.json`，binding SHA-256 `a208618a…`。
+     - FAISS 移植可行，不採用備案。
+  5. ✔ 10 份 formal config 與 `QUANT_CONFIGS` 已在 dca22c9，與附錄逐字相同（測試比對）。
+  6. **下一步：真實資料的 correctness smoke**（heavy lock、machine_quiet、smoke 模式），兩份 smoke config 已 commit。見「下一步」第 7 點。
+- **審查發現的已知事實（不改判定規則）**：加入 quant 模組之後，Core 的原始碼沒變，但 hnsw crate 的 codegen 變了。
+  - `search_layer` 把 visited set 的 `HashMap::insert` inline 進來了。紀錄在 `results/quant/core-codegen.json`，由 `scripts/probe_core_codegen.py` 產生。
+  - H1、H2 不受影響（F、S 在同一個 binary）。
+  - C5 預期依構造會「不一致」，原因已知，報告要照實註明；C6 讀為「漂移加上 codegen 差異」。見 019 的補記第 5 節。
+- **使用者 2026-10-16 的提醒**：Mac 上有沒取 lock 的工作在跑，開跑前要看 CPU、GPU 與 RAM。等待腳本會用 `benchmarks.machine_quiet` 檢查這些。
+- 2026-10-17 01:10（台灣）1 分鐘 load 約 11（使用者的其他工作），還不能跑 heavy 的步驟。
 
 - **2026-10-16（台灣）使用者決定進入 Advanced C（vector quantization）**，依 SPEC 特例；不宣稱原本的 Gate 全部通過，Core 的正式結果、Gate 與事先登記的比較規則都不修改。最多三個假設、不擴張到 A、B 或 Optional；先登記假設、baseline、評測協定與停止條件（decision 019：已事先登記）。工程改善（測試、API 易用性、文件、Demo）可以並行，但不得污染研究結果（019 的隔離規則）。
 - **使用者要求開跑前也看 GPU 與 RAM**（其他工作可能不取 lock）：等待腳本改用 `benchmarks/machine_quiet.py`（lock、背景 CPU、load、GPU ≤ 20%、記憶體 free ≥ 30%、電力模式）。
@@ -64,7 +83,7 @@
 
 ## 目前位置
 
-**Core：全部完成（2026-10-16）**；是否進 Advanced 等使用者決定：
+**Core：全部完成（2026-10-16）**；使用者 2026-10-16 決定進入 Advanced C（decision 019，進度見「目前狀態」）。Core 的部分：
 
 - 已完成：HNSW insert / search（004）、save / load（005）、Python binding 與 efSearch 介面（006）、
   hnswlib / FAISS adapters（007）、benchmark runner（008，含實作後審查）、比較規則（010）、報告腳本。
@@ -89,7 +108,7 @@
 - **`simplewiki-embeddinggemma2-100k` 已登記**（012 補記）：前 1,000 個 query 與 pilot 逐位元相同；correctness smoke 通過（ef 192 約 0.993）。
   文字 4 份 formal config 已 commit（timeout 依 013 §6 檢查後不需上調）。**12 份 formal config 全部已 commit。**
 
-尚未進 Advanced（Gate 的讀法已在 decision 015 事先登記，但還沒有正式結果可判斷），沒有做任何 Optional。
+Gate 依 015 的事先登記讀法，條件 3 不成立；使用者依 SPEC 特例決定進入 Advanced C（不宣稱 Gate 通過）。沒有做任何 Optional。
 
 ## 工作方式（使用者 2026-10-08 指示）
 
@@ -270,6 +289,20 @@
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
    - 待正式 run 的結果出來後，依相近的 Recall@10 為各實作選 ef，在 heavy lock 下取樣。
 
+7. **Advanced C（decision 019 §9 第 6–8 步）**：每一步都先通過 `machine_quiet`，再在 heavy lock 下進行；repo 必須乾淨，binding 必須晚於 HEAD。
+   1. `./scripts/test.sh`，讓 binding 晚於 HEAD。確認已安裝 binding 的 SHA-256 等於 `results/quant/premise.json` 的值；
+      不同時，先把舊的 premise 改名保留，再重跑 `.venv/bin/python -m benchmarks.quant_profile premise`（019 補記第 3 節）。
+   2. **smoke**：
+      `./scripts/formal_launcher.sh results/batches/quant-smoke.log 86400 --powermode 2 --skip-idle --mode smoke benchmarks/configs/glove-quant-smoke.toml benchmarks/configs/text-quant-smoke.toml`
+   3. **smoke 的核對**：
+      - `.venv/bin/python -m benchmarks.quant_smoke <smoke run> --core-runs <019 §2 登記的該資料集 Core run>`
+      - 再在 heavy lock 下加 `--port` 核對 FAISS 的移植。
+      - 子 process 的時間只用來依 019 §5 上調 timeout；smoke 之後不得改假設、門檻、格點、ef、seed 或讀法。
+   4. **formal**：10 份 C config，同一個變壓器、高效能模式，執行順序依 019 §5：
+      `./scripts/formal_launcher.sh results/batches/quant-<…>.log <max_wait> --powermode 2 --skip-idle <configs>`
+      - formal 進行中 repo 不得有任何改動；工程改善在其他 worktree 進行（019 §10）。
+   5. **收尾**（019 §9 第 8 步）：`quant_diag` → profiling 的 plan、取樣與 check → `quant_report` → README 的 C 一節 → 更新 NEXT → 封版。
+
 ## Deferred（已解除）
 
 - 2026-10-10 01:50 前後：使用者要先跑重要工作，暫停本專案所有重負載（formal run、Gate profiling、`./scripts/test.sh` 的編譯）；04:00 前後使用者確認可以恢復。
@@ -283,7 +316,7 @@
 - （已決定）文字的電力模式（016：高效能）、電量規則（017：取消）、變壓器（018：70W 或 140W）、開始時不看電量。
 - **（已決定，2026-10-16 台灣時間）進入 Advanced C：vector quantization**，依 SPEC 特例（使用者的判斷，不是 015 的讀值）；不宣稱原本的 Gate 全部通過。
   使用者另外決定：採用 decision 019 的設計（SQ8、H1 / H2、5 個臂、Rust 5 seeds / FAISS 3 seeds）、記憶體主要指標維持 014 的 phys_footprint、
-  C 做完就封版（不保留第三個名額）。019 草稿經獨立審查（17 個 findings 全部採用），2026-10-16 在分支 `prereg-quant` 上事先登記（`docs/decisions/019-advanced-c-vector-quantization.md`）。下一步依 019 §9：golden test → 實作（只用 synthetic 資料）→ 獨立審查 → test.sh 與反組譯前提 → 加入 10 份 config → 真實資料的 correctness smoke（heavy lock）→ 10 份 formal → 診斷、profiling、quant_report。
+  C 做完就封版（不保留第三個名額）。019 草稿經獨立審查（17 個 findings 全部採用），2026-10-16 在分支 `prereg-quant` 上事先登記（`docs/decisions/019-advanced-c-vector-quantization.md`）。019 §9 第 1–5 步已完成（2026-10-17）；接下來是真實資料的 correctness smoke → 10 份 formal → 診斷、profiling、quant_report（見「下一步」第 7 點）。
 - **GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
   是否在看過結果之後補跑 `glove-formal-8`（需另寫 decision，標明是看過結果之後、只因 hygiene 標記），由使用者決定；預設照實報告「只有含標記點的讀值」。
 - **Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。

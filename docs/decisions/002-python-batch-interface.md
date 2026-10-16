@@ -87,3 +87,11 @@ PyO3 + rust-numpy + maturin，Python module 名稱為 `rust_hnsw`。
 - hnswlib 的 space 選擇（`cosine` 會在內部再正規化一次、`ip` 不會）在寫 adapter 時決定，
   原則是：三者對同一份 unit vectors 做相同的 `1 − ip` 計算，不讓任一方做多餘的正規化以外的額外工作。
 - latency 數字包含 Python / FFI 呼叫成本；報告時要註明，並在 runner 中量一次空呼叫成本作參考。
+
+## 補記（2026-10-17，Advanced C 的實作之後、任何真實資料上的量化結果之前）：量化臂的距離
+
+- decision 019 的量化臂（`rust-hnsw-sq8`、`faiss-hnsw-sq8`）回傳的是**表示本身估計的** cosine distance，不是 FP32 的距離。
+  - Rust 在輸出時夾到 [0, 2]；FAISS 的 adapter 以 `np.clip(1 − ip, 0, 2)` 夾住。
+  - 走訪與排序用夾住之前的原始值。夾住是單調的，排序不變。
+- 介面與 `check_search_result` 都不變。id-based recall 與 tie-aware recall 由 harness 以 f64 重算，不受影響。
+- 只適用於 019 的 C run。

@@ -104,3 +104,13 @@ EXPERIMENT_RULES 要求 same recall region、多次重跑、報告 variance。
 - 上一則補記的 footprint 輔助讀值改為**主要讀值**：recall–memory frontier（第 2 點）與 scaling（第 5 點）的 index memory 以
   `index_footprint_bytes`（phys_footprint 增量）為準，`index_memory_bytes`（rss 增量）改為輔助讀值（decision 014）。
 - 第 3 點的 hygiene 標記清單加入 `background`（014 與補記：子 process 期間，以累積 CPU 時間的區間平均判定有背景 heavy workload）。
+
+## 補記（2026-10-17，Advanced C 的實作之後、任何真實資料上的量化結果之前）：只適用於 C 的比較規則
+
+decision 019 的 C run 另有下列規則，都不改變 Core 的讀值與判讀：
+
+- **§2**：同 (seed, ef) 的配對比較只對圖逐位元相同的配對開放：S 對 F，以及移植後的 Q 對 P。
+- **§4**：
+  - C 不做 shuffle；
+  - Rust 跑 5 個 seed、FAISS 跑 3 個 seed（使用者決定，理由見 019「為什麼」）。
+- 主要讀值與 quantization frontier 判讀排除有 hygiene 標記的 build，每側至少 3 個未標記的 build（019 §6）。

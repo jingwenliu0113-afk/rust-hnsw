@@ -78,3 +78,16 @@ SPEC 的 Gate 要求「profiler 已顯示時間主要花在哪」。Advanced 的
 - pip 安裝的 `faiss-cpu`（`libfaiss.dylib`）沒有符號表。FAISS 的歸屬改以 `nm -n` 的 text 符號近似：每個位移歸給它**之前最近的符號**。
   這是看過取樣之後才加的、近似的解讀：被 inline 或沒有匯出的函式會算到前一個符號，只用來看大類，不作精確結論。
 - SPEC 的 Gate 以 hnswlib 為準；Rust 與 hnswlib 都有完整的符號。
+
+## 補記（2026-10-17，Advanced C 的實作之後、任何真實資料上的量化結果之前）：C 的取樣
+
+decision 019 §8 的 profiling 沿用本文件的工具與 015 §2 的證據條件。不同之處：
+
+- **函式邊界**：新臂 F、S 以 `#[inline(never)]` 拆出兩個距離 kernel（`rhnsw_kernel_fp32`、`rhnsw_kernel_sq8`）。
+  - 三個走訪函式也是 `#[inline(never)]`：否則會被整個 inline 進 `QuantIndex::search_batch`，走訪會落到「其他」。
+  - 這只改函式邊界，不改算術；binding 中有獨立符號，由 `nm` 測試保證。
+- **分類規則**：在取樣之前固定（019 §8），實作於 `benchmarks/quant_profile.py`，並以測試逐條釘住。
+- **FAISS 不取樣**：沒有符號表，依上一則補記只能近似歸屬。
+- **R 的機器碼**：C 的 binary 中，Core 的 `search_layer` 把 visited set 的 `HashMap::insert` inline 進來了，Gate profiling 的 binary 則沒有。
+  - 原始碼沒有改；這是加入 quant 模組後 codegen 的改變（019 的補記第 5 節）。
+  - 所以 C 中 R 的類別占比與 Gate profiling 的排行不能直接對照：C5 預期會不一致，原因已知。

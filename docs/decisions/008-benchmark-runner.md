@@ -357,3 +357,15 @@ runner 實作完成後，以三個角度審查（是否忠實落實 008 / 010、
 §1 的前置檢查與重新確認加入電力條件（自動電力模式、Apple 原廠 70W 變壓器、AC）與電池下降的作廢規則；
 §2 的 gate 加入「沒有背景 heavy workload」；§8 的 recall–memory frontier 改以 `index_footprint_bytes`（phys_footprint 增量）為主、
 `index_memory_bytes`（rss 增量）為輔；§9 加入 `background` 標記。協定版本改為 `008-v2`。
+
+## 補記（2026-10-17，Advanced C 的實作之後、任何真實資料上的量化結果之前）：008-v5
+
+decision 019（Advanced C）的協定版本。計時常數、gate、hygiene 標記與電力條件都與 008-v4 相同；只用於 C 的 run。
+
+- **新的實作名稱**：`rust-hnsw-fp32g`、`rust-hnsw-sq8`、`faiss-hnsw-sq8`。
+- **`serialized_bytes` 可以為 null**：adapter 沒有 `save_native` 時（F、S 不新增檔案格式）。報告能處理 null，由測試保證。
+- **relief 診斷**：子 process 最後，在所有計時點與 `save_native` 之後，呼叫一次 `malloc_zone_pressure_relief(NULL, 0)`，再以 `_memory()` 記錄 `after_relief`。
+  - build 紀錄新增 `after_relief`、`index_footprint_relieved_bytes`、`index_memory_relieved_bytes`，後兩者相對 baseline。
+  - 這些只是診斷（M_relief）。主要指標仍是 `index_footprint_bytes`（014），hygiene 標記也不看它。
+  - protocol 紀錄以 `memory_relief` 欄位記錄時點；所有實作都走同一段程式。
+- `PROTOCOL_VERSION` 是全域常數，之後任何 run 都記為 008-v5。Core 的既有報告讀的是 run.json 裡記錄的版本，不受影響。

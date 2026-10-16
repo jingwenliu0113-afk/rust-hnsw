@@ -1050,6 +1050,217 @@
 
 同時寫入使用者 2026-10-16 的決定（§13）與工程改善的隔離規則（§10）；原 §10–§12 依序改為 §11–§13。
 
+## 補記（2026-10-17，實作與審查之後、任何真實資料上的量化結果之前）
+
+本補記涵蓋 §9 的第 3–5 步。到目前為止，量化表示只在 synthetic 資料上執行過；smoke、formal、天花板與 profiling 都還沒有開始。
+**假設、預測、門檻、格點、ef、seed、e\*、讀值、判定表、停止條件與主要記憶體指標都沒有改變。**以下只記錄實作層級的事實與 019 沒有寫明的細節。
+
+### 1. 實作與審查（§9 第 2、3 步）
+
+- **commit**：
+  - golden test：9cfc35f，在任何 C 的程式之前；
+  - 實作：dca22c9；
+  - 機器碼比對的 probe：e30784d（見第 5 節）。
+- **實作方式**：依序分 5 個階段：Rust、binding、adapter、runner 008-v5、工具與 config。每個階段結束時 `./scripts/test.sh` 都通過，全程只用 synthetic 資料。
+- **獨立審查**：三位審查者分別從三個角度檢查：對 019 的忠實度、Core 隔離、測試鑑別力（mutation）。
+  - 共 20 個 findings：高 1、中 5、中低 3、低 11。
+  - 18 個修正並補上測試；2 個（Core 的機器碼改變）屬實但不改程式，記在第 5 節。
+  - 修正後，把審查列出的 mutation 加上新增檢查共 44 個套回工作目錄重跑，全部被測試抓到。
+  - 各階段實作者自己做的 mutation：Rust 16 個、binding 15 個、adapter 25 個、runner 18 個、工具 115 個。存活的都已逐一說明是等價 mutation。
+- **最高嚴重度的 finding（高）**：
+  - 問題：沒有測試釘住「W_X 是 k = ef 的完整候選表」。若誤用 k = 10 的結果，L_rank 與 δ_F 會恆為 0，C2 永遠一致，H2 只要 L_total > 0.00133 就會一律判「不成立」，而且不會有警告。
+  - 修正：測試獨立重算 T_X，用 spy 確認 search 以 k = ef 呼叫；診斷輸出加 `w_width`。
+- **最後的 `./scripts/test.sh`**（dca22c9）：
+  - rustfmt、clippy `-D warnings`、cargo test 都通過；
+  - pytest 1024 passed、3 skipped；.venv-embed 16 passed；
+  - `tests/test_core_golden.py` 的登記值沒有改，全程綠燈。
+- **Core 不變的證據鏈（§4）**：
+  1. `git diff 9cfc35f dca22c9` 在 Core 範圍內，只有 `hnsw.rs` 多 `mod quant;` 與一行 `pub use`、`lib.rs` 擴充 re-export。
+     Core 範圍指 distance、batch、exact、rng、error、persist、crc32、`Cargo.*`、`interface.py`、`datasets.py`、`metrics.py`，以及 golden test、`test_report.py`、`test_gate_profile.py`。
+  2. golden test 與既有測試全部通過。
+  3. 隔離審查者以新舊 `report.py` 重產兩份 Core 報告，report.json、report.md 與圖逐位元相同。
+  4. 機器碼層級**不是**不變的，見第 5 節。
+
+### 2. FAISS 移植的定案（§3、§9 第 4 步）
+
+- **定案**：移植可行，不採用備案（原生 `IndexHNSWSQ`）。依 §9 第 4 步，之後不得再改用備案；smoke 或 formal 中 C8 不一致時只能記為不適用。
+- **依據**：只看 synthetic 測試，全部通過（`tests/test_third_party_semantics.py`，比照 007 標 [測試]）。
+  - 6 組資料：多層圖、M = 4、重複向量、n = 17、16、1。移植後的 `levels`、`offsets`、`neighbors`、`entry_point`、`max_level` 都與 Flat 完全相同。
+  - 是深複製：改動或釋放 Flat 都不影響 Q。
+  - `is_trained`：只 train storage 時，外層 `is_trained` 仍是 False；移植程式設為 True 之後才能 search。
+  - `write_index` / `read_index` 之後，graph 與結果逐位元相同。
+  - 在量化不改變排序的 sign-cube 資料上，Q 與 Flat 的 ids 相同（前提在測試內驗證）。
+- **其他實測語意**（007 的補記）：
+  - storage 是 QT_8bit、RS_minmax、`rangestat_arg = 0`；`trained` 等於逐維的 min 與 max − min。
+  - vdiff = 0 的維度 code 為 0，解碼為 vmin。
+  - similarity 實測可到約 1.0039，不夾住就會被 `check_search_result` 拒絕。
+  - 距離 > 2 的情形以 q = −x 的 fixture 確認：先確認原生 similarity < −1，再確認輸出恰好夾到 2.0。
+- **codes 一致比例**：
+  - synthetic 的 7 組輸入上都是 1.0。
+  - 真實資料上可能略低於 1：S 在 Core `add` 重新正規化之後的向量上訓練，Q 在 harness 傳入的向量上訓練。
+  - 依 C8，這只描述，不擋流程。
+
+### 3. H1 前提檢查（§2、§9 第 4 步）
+
+- **結果**：`results/quant/premise.json`，**成立**。
+  - 檢查對象：binding SHA-256 `a208618a2b0ecf574235809e15739270f04f3e4c46bdcd66c8449aecc73931ad`，git 乾淨（e30784d）。e30784d 的 `crates/`、`python/` 與 dca22c9 相同。
+  - `rhnsw_kernel_fp32`：97 條指令。累加暫存器 s0，21 次依序的 `fadd s0, s0, sN`，沒有違反。
+  - `rhnsw_kernel_sq8`：241 條指令。累加暫存器 s1，69 次依序累加，加上恰好一次 b + Σ（`fadd s0, s0, s1`），沒有違反。
+  - SQ8 kernel 的轉換指令（只作紀錄）：`tbl.16b` 16、`ucvtf.4s` 17、`ucvtf` 1、`ushll.8h` 1、`ushll.4s` 1。
+- **機械判準的具體化**（019 只寫了原則）：
+  - 累加暫存器是 `fadd sN, sN, sM` 中最常出現的 N；平手算違反。
+  - SQ8 允許恰好一次「以累加暫存器為來源、寫入另一個暫存器」的加法（b + Σ），FP32 為零次。
+  - 下列都算違反：運算元不全是 s 暫存器的 `fadd`、`faddp`、`fadda`、`fadd.<T>`，以及融合乘加（`fmadd`、`fmla` 等）。
+- **與 formal binary 的綁定**：
+  - `quant_report` 要求 premise 的 binding SHA-256 等於 C formal run 記錄的 `rust_hnsw` 擴充模組 SHA-256。
+  - smoke 或 formal 之前若重新編譯而 bytes 不同，要在那份 binary 上重跑 premise：舊的輸出改名保留，工具拒絕覆寫。
+
+### 4. 019 沒有寫明、由實作決定的細節
+
+**Rust（`crates/hnsw/src/hnsw/quant.rs`）**
+
+- **走訪函式也加 `#[inline(never)]`**（§4 只寫了 kernel），對應審查 finding「中」。
+  - 原因：`search_unit_q`、`greedy_search_q`、`search_layer_q` 每個單態化只有一個呼叫點，原本會被整個 inline 進 `QuantIndex::search_batch`，依 §8 第 4 條，F、S 的走訪會全部落到「其他」。
+  - 效果：只改函式邊界，讓 F、S 的走訪成為獨立符號（Core 的三個函式本來就是），共 12 個走訪符號，歸類為 traversal。
+  - 代價：函式呼叫的開銷，F、S 對稱，由 C4 量化。加上之後 Core 函式的機器碼沒有再改變，前提檢查仍成立。
+- **多了 `is_empty()`**：clippy 的 `len_without_is_empty` 在 `-D warnings` 下會讓 test.sh 失敗。
+- **計數**：用私有的 `Counter` trait（`NoCount` / `Count`）做成另一個單態化；計時路徑用 `NoCount`，沒有任何計數器。距離 trait 仍然只有 FP32、SQ8 兩個實作。
+- **V 的定義**：呼叫 `visited.insert` 的次數，含 entry，不論插入的是不是新元素。「新元素的插入數」等於 layer 0 的 kernel 次數 + 1，可以由 D 推得。
+- **`sq8_train_encode` 的邊界**：
+  - n = 0 時回傳全為 0 的 vmin / vdiff。
+  - 下列情形 panic（binding 先檢查並改成 `ValueError`）：dim = 0、長度不是 dim 的整數倍、含 NaN / Inf、某一維的範圍溢位成 Inf。
+  - min / max 照 FAISS 的寫法：從第一列開始，以嚴格的 `<` / `>` 更新。結果與 min / max 相同，只差在 ±0 時保留哪一個。
+- **S 每個 query 配置一次 `w`**（d 個 f32），F 沒有這筆配置。
+  - 這是 S 本身的非 kernel 工作，反映在 ν 中；019 沒有規定，照原樣保留。
+  - 量級：每個 query 一次 d × 4 B 的配置，而每個 query 有數千次 kernel 評估。
+
+**binding（`python/src/lib.rs`）**
+
+- 表示名稱用字串 `"fp32"` / `"sq8"`。沒有建構子，只能用 `build` / `build_pair` 建立。
+- **`build_pair` 的 F 與 S 都從 clone 轉換**：`Vec::clone` 會把 capacity 收緊成長度，混用原 index 與 clone 時，F − S 就不等於 3nd − 8d。
+  - 先轉 SQ8 再轉 FP32，峰值記憶體比較低。
+  - 副作用：`build_pair` 的 M_struct 小於 formal index 的實際結構大小。
+- **回傳格式**：
+  - `search_stats`：`(ids, distances, kernel_calls, visited_inserts)`，後兩者是 uint64、長度等於 query 數。
+  - `memory_accounting`：dict，5 個欄位加 `total_bytes`。
+  - `codes()` / `codebook()` 回傳複製；FP32 時回傳 `None`。
+- **`sq8_encode`**：不正規化，直接在輸入上訓練，供 §4 對 FAISS `compute_codes` 的比對。
+
+**adapter（`benchmarks/adapters.py`）**
+
+- **兩個新的 module 函式**：`faiss_hnsw_flat`、`faiss_sq8_from_flat`。§7 的診斷要用「同一段建圖程式」重建 Q。
+  - `FaissHnsw` 不能改，所以建 Flat 的四行重寫了一次；兩者 graph 相同由測試保證。
+- **`omp_set_num_threads(1)`**：放在純 numpy 的檢查之後、任何 FAISS 呼叫之前，與 `FaissHnsw` 的順序相同。
+- **合約測試**：「F 與 R 的 adapter 輸出逐位元相同」保留，作為 C7a 的前提（配對正確性），不屬於 019 排除的 FP32 語意等價測試。
+
+**runner 008-v5（`benchmarks/run_child.py`、`run.py`、`protocol.py`）**
+
+- **紀錄格式**：
+  - protocol 的新欄位 `memory_relief` 記錄 relief 的時點，寫法比照既有的 `gc` 欄位。
+  - build 紀錄保留 `after_relief` 的原始讀數，比照 `after_build`。
+- **不記錄**：relief 的回傳值不記錄（synthetic 試驗中它回傳 0，但 rss 確實下降了，回傳值不可靠）。
+- **relief 之前不做 `gc.collect`，也不釋放最後一個 ef 點的陣列**。
+  - 殘留量：約 1.11 MiB（GloVe）、0.22 MiB（文字）。
+  - 所有臂相同，在 F − S 中抵消。
+- **`PROTOCOL_VERSION` 是全域常數**：之後任何 run 都記為 008-v5。Core 不再跑新的 run，既有報告讀的是 run.json 裡記錄的版本，不受影響。
+
+**報告與診斷工具（`quant_report`、`quant_diag`、`quant_profile`、`quant_smoke`）**
+
+- **輸出路徑**：
+  - 報告：`results/reports/quant-glove/`、`quant-text/`，兩份列出同一張判定表；
+  - 診斷：`results/quant/diag-<glove|text>.json`；
+  - 前提檢查：`results/quant/premise.json`；
+  - 取樣：`results/profiles/quant-<glove|text>-<實作>-ef<ef>`（S 有兩次取樣，所以名稱帶 ef）。
+- **門檻比較一律用精確分數**：recall 用命中數 / (nq × k)；QPS 與 D 用浮點值本身的精確分數；門檻用十進位精確值。
+  - 例：0.9007 − 0.8967 以浮點計算會判成「不適用」，以精確分數則是「成立」。
+- **合併條件比 019 寫明的嚴格**：
+  - 只讀 formal run，兩個資料集都要有；
+  - 每個 run 的協定是 008-v5、電力模式是 2；
+  - 兩個資料集之間也比對 metadata 與量測程式（§5「整組 C、同一個變壓器」）；
+  - 每個資料集內照 `_check_mergeable` 檢查。
+- **完整性**：`quant_diag` 與 `quant_profile plan/check` 都要列出全部 10 份 C formal run，再以 `--dataset` 指定資料集；兩個資料集各 5 份必須都是完整的 C formal set（§7「在全部 10 份完成之後」）。
+- **`--core-runs`** 必須恰好列出上表登記的 4 個 Core run。
+- **條件式狀態的細部**（都在 §6 允許的狀態內）：
+  - C7a / C7b：C 自己的點缺失（`c_missing`）也記為無法判定；019 只寫了 Core 的 points 檔缺失。
+  - C8：無法判定的原因分三種，`ids_mismatch`（019 寫明的情形）、`formal_ids_missing`、`diag_missing`。validator 要求各 seed 的狀態與原因一致。
+  - C4：遇到 hygiene 標記或點缺失時記為無法判定，比值照列。
+  - C1：排除有 memory / swap 標記的 build，F − S 與 P − Q 分列；所有 C 列都依資料集分列。
+  - FAISS 的配對讀值要求 C7b 為「一致」。
+- **有效性的細部**：
+  - 「formal recall 存在」排除結果不足 k 的點。
+  - (seed, 臂) 有效，要求沒有任何不符的點，而且至少有一個相符的點。
+  - D 只在該 ef 的 formal 點相符時有效。
+- **方向**：ρ = SQ8 ÷ FP32，Δ = FP32 − SQ8。frontier 的比值除了 QPS，也列出 P50、P95 與 M_014。
+- **報告新增的描述性輸出**：
+  - 每 build 記憶體表加「M_struct（診斷）」一欄，並註明來源是 `build_pair` 的 clone；
+  - 各 ef 的 Recall@10、tie-aware Recall@10、Recall@1 表；
+  - 其他 ef 的 ρ_QPS、ρ_eval 與 e\* 分屬 1 的兩側時加粗標出（§2「方向不一致時照實寫明」）。
+- **診斷的細部**：
+  - c 的 Recall@1 取 k = 10 exact 結果的第一欄。
+  - 天花板只用 seed 1 的 S；各 seed 的 codes 相同，由 SHA-256 核對。
+  - Q 的結構大小另外加上 codebook。
+  - 診斷不計時，所以不檢查電力條件；`machine_quiet` 由操作者在取 lock 之前執行。
+- **S 的同 recall 取樣**（§8 第 4 項）：0.95 與 0.90 都沒達到時略過。profiling 的 check 另外要求高效能模式，以及與 formal run 同一個變壓器（§5）。
+- **smoke（§9 第 6 步）**：新增 `benchmarks/configs/glove-quant-smoke.toml`、`text-quant-smoke.toml` 與 `benchmarks/quant_smoke.py`。
+  - config 照 §9 第 6 步：seed 1、五個臂；ef 是 GloVe {64, 304, 768}、文字 {24, 48, 512}，由測試對照 019 的原文。
+  - 臂的順序與 timeout 沿用 seed 1 的 formal config（019 沒有寫明）。
+  - `quant_smoke` 沿用 `c7_core`，核對 F、R、P 與 Core 的 ids，以及 C 內 F 對 R。
+  - `--port` 在 heavy lock 下重建 Q，核對 graph 與 e\* 的 ids。
+- **「只影響診斷函式的 Rust bug」例外**（§9）：沒有預先實作，需要時另寫補記再加參數。
+
+### 5. Core 的機器碼改變（審查 finding「中」與「低」各一，不改程式）
+
+**事實**：
+
+- Core 的原始碼沒有改，但加入 quant 模組改變了 hnsw crate 的 codegen：CGU 的內容變了，LLVM 的 inline 決策也跟著變。
+- 紀錄：`results/quant/core-codegen.json`，由 `scripts/probe_core_codegen.py 9cfc35f dca22c9` 產生。
+  - 9cfc35f 的 `crates/`、`python/`、`Cargo.*` 與 Core formal（f077de9、4acf799）及 Gate profiling（5af774d）的 commit 相同。
+  - 只編譯零相依的 hnsw crate，各約數秒；同一個 commit 自己比對時，101 個函式全部相同（工具的對照）。
+- 結果：quant 模組以外的函式，86 個相同、7 個不同；另有 Core 端 8 個函式消失、C 端出現 25 個新函式（多為 drop glue、iterator 與 heap 的 helper）。不同的 7 個是：
+
+  | 函式 | 指令數（Core → C） |
+  | --- | --- |
+  | `HnswIndex::search_layer` | 418 → 569 |
+  | `HnswIndex::search_batch` | 245 → 185 |
+  | `HnswIndex::add` | 1485 → 1222 |
+  | `BinaryHeap<Candidate>::into_sorted_vec` | 84 → 31 |
+  | `quicksort<Candidate>` | 299 → 2071 |
+  | `exact` 的 `Map<IntoIter<Candidate>>` | 92 → 93 |
+  | `persist::temp_path` | 124 → 128 |
+
+- 在連結後的 binding 上（`otool -tV`），Core 的 `search_layer` 只剩一次 `bl HashMap<u32, ()>::insert`（迴圈之前的 entry）：
+  - 迴圈內的 `visited.insert` 已 inline，連帶出現 `make_hasher`；
+  - `into_sorted_vec` 也 inline 了（改為呼叫 `sift_down_range`）；
+  - `push_padded_row` 反而不再 inline 進 `search_batch`。
+- 不變的部分：
+  - `search_unit`、`greedy_search`、`unit_rows`、`ExactIndex` 的函式完全相同。
+  - 輸出不受影響：依序的 f32 加總沒有被重排，golden test 與 F ≡ R 的等價測試都通過；真實資料上由 C7a 核對。
+
+**評估過恢復成與 Core 相同，結論是不可行**：
+
+- 把 quant 模組全部標成 `#[inline]` 之後，Core 仍有 6 個函式不同：`push_padded_row`、`unit_rows`、`check_k` 被 downstream 引用之後，linkage 改變了。
+- 要完全恢復，就得在 quant.rs 複製 `check_k`、`unit_rows`、`normalize`、`push_padded_row`，連 kernel 都要改寫。這違反 §3「kernel 內部呼叫 `cosine_distance_unit`」與 §4「沿用」的規定。
+- CGU 依大小合併，這種做法很脆弱。
+- 修改 `hnsw.rs` 或 Cargo profile（例如 codegen-units）會違反 §4，也會再改變 Core 的 codegen 與 BUILD_INFO，所以也不採用。
+
+**對讀值的影響（判定規則都不變）**：
+
+- **H1、H2 不受影響**：兩者比的是 F 與 S，在同一個 binary 中、走同一份複製的走訪程式。
+- **R 的描述**：C 的 R 與 Core formal、Gate profiling 用的 binary「原始碼相同，機器碼不同（inline 決策改變）」。§3「Core 的 adapter 與程式，一行不改」只對原始碼成立。README 的 C 一節照這樣寫。
+- **C5（Gate 重現，只描述）**：
+  - Gate profiling 中，`HashMap::insert` 是獨立符號：GloVe 占 35.8%（visited set 合計 43.6%），文字占 4.6%（合計 6.4%）。
+  - C 的 binary 中，它 inline 進 `search_layer`，依 §8 的分類規則會從 visited set 改歸 traversal。
+  - 所以預期 C5 依構造會判成「不一致」：GloVe 的 visited set 預期會遠低於 Gate 的 43.6%，文字約少 4.6 個百分點，兩者都超出 3 個百分點的容許差。
+  - C5 照登記的規則判定；報告必須註明已知原因是 inline 決策改變，不得寫成「Gate 無法重現」。
+- **C6（漂移，只描述）**：讀為「時間漂移加上 codegen 差異」，兩者無法分開。R 的 build time 也照同樣方式註明。
+- **C4（路徑失真）**：QPS_F / QPS_R 中的 R 是 C binary 裡的 Core 函式；規則不變，比值同樣包含 codegen 的差異。
+- **「放棄的替代方案」的更正**：
+  - 原文以「屬於重工作」為由，不做 Core 函式的反組譯比對。實際上只編譯零相依的 hnsw crate，各約數秒，不是重工作。
+  - 現在把它加為描述性紀錄（本節），不取代 C7 與 C4，也不新增任何判定。
+- **之後的核對**：
+  - C formal 開始之前，若 `crates/` 有任何改動，要以 formal 的 commit 重跑 `scripts/probe_core_codegen.py`，舊的紀錄改名保留。
+  - formal 的 commit 與 dca22c9 的 `crates/` 相同時，本紀錄直接適用。
+
 ## 附錄：formal config（逐字登記）
 
 在實作 commit 中加入 `benchmarks/configs/` 的檔案，內容必須與下列範本代入後完全相同；唯一的例外是依 §5 上調的 `child_timeout_s`。`benchmarks/quant_report.py` 的 `QUANT_CONFIGS` 恰好登記這 10 份，每個資料集 5 份。
