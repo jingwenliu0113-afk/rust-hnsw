@@ -31,25 +31,13 @@ while :; do
     echo "GAVE_UP after ${max_wait}s"
     exit 2
   fi
-  quiet=$("$PYTHON" - "$LOCK_DIR" <<'PY'
-import os
-import sys
-
-from benchmarks import environment, protocol
-
-lock = os.path.exists(sys.argv[1])
-heavy = environment.background_processes(exclude=environment.ancestor_pids(os.getpid()))
-load = os.getloadavg()[0]
-if not lock and not heavy and load < protocol.MAX_LOAD_1MIN:
-    print("yes")
-else:
-    print(f"no lock={lock} load={load:.1f} heavy={[h['command'].split('/')[-1] for h in heavy][:3]}")
-PY
-)
-  if [ -n "$powermode" ] && [ "$quiet" = "yes" ]; then
-    current=$("$PMSET" -g | awk '$1 == "powermode" {print $2}')
-    [ "$current" = "$powermode" ] || quiet="no powermode=$current expected=$powermode"
+  # 機器是否閒置：lock、背景 CPU、load、GPU、記憶體（benchmarks/machine_quiet.py；使用者 2026-10-16 要求也看 GPU 與 RAM）。
+  if [ -n "$powermode" ]; then
+    quiet=$("$PYTHON" -m benchmarks.machine_quiet --powermode "$powermode" 2>&1)
+  else
+    quiet=$("$PYTHON" -m benchmarks.machine_quiet 2>&1)
   fi
+  [ "$quiet" = "yes" ] || echo "$(date -u +%H:%M:%SZ) $quiet" >> "$log.wait"
   if [ "$quiet" = "yes" ]; then ok=$((ok + 1)); else ok=0; fi
   if [ "$ok" -ge 3 ]; then
     nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' ./tools/with-mac-lock ./scripts/formal_batch.sh "$log" "$@" \

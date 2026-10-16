@@ -4,6 +4,8 @@
 
 時間一律註明時區（台灣時間 = UTC+8）。
 
+- **2026-10-16（台灣）使用者決定進入 Advanced C（vector quantization）**，依 SPEC 特例；不宣稱原本的 Gate 全部通過，Core 的正式結果、Gate 與事先登記的比較規則都不修改。最多三個假設、不擴張到 A、B 或 Optional；先登記假設、baseline、評測協定與停止條件（decision 019，設計中）。
+- **使用者要求開跑前也看 GPU 與 RAM**（其他工作可能不取 lock）：等待腳本改用 `benchmarks/machine_quiet.py`（lock、背景 CPU、load、GPU ≤ 20%、記憶體 free ≥ 30%、電力模式）。
 - **Core 全部完成**：兩個資料集的正式 run 與報告、Gate profiling、README 的結果段落（GloVe、文字、Gate profiling）都已 commit。
 - **文字 4 份 complete**（008-v4、高效能、140W）：1 `20261015T191333Z-formal`、2 `20261015T210125Z-formal`、3 `20261015T222221Z-formal`、
   4 `20261015T225545Z-formal`。報告 `results/reports/simplewiki-embeddinggemma2-100k/`（`--excluded` 7 個 run）。

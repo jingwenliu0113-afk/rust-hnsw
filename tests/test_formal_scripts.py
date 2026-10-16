@@ -23,9 +23,13 @@ fi
 if [ "$1" = "-c" ]; then
   exec python3 "$@"
 fi
-if [ "$1" = "-" ]; then
-  cat > /dev/null
-  echo yes
+if [ "$1" = "-m" ] && [ "$2" = "benchmarks.machine_quiet" ]; then
+  # 只模擬電力模式：--powermode N 與 $FAKE_DIR/mode 不同時不閒置。
+  if [ "${3:-}" = "--powermode" ] && [ "$(cat "$FAKE_DIR/mode")" != "$4" ]; then
+    echo "no powermode=$(cat "$FAKE_DIR/mode") expected=$4"
+  else
+    echo yes
+  fi
   exit 0
 fi
 exit 99
@@ -110,6 +114,7 @@ def test_the_launcher_keeps_waiting_while_the_power_mode_differs(fake):
                              "a.toml"], env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 2 and result.stdout.startswith("GAVE_UP")
     assert not (fake / "batch.log.launcher").exists()  # 沒有啟動批次
+    assert "powermode=0 expected=2" in (fake / "batch.log.wait").read_text()  # 等待的原因留在 .wait
 
 
 def test_scripts_reject_missing_arguments(fake):
