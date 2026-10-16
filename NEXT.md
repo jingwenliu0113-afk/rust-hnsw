@@ -4,7 +4,7 @@
 
 時間一律註明時區（台灣時間 = UTC+8）。
 
-- **2026-10-16（台灣）使用者決定進入 Advanced C（vector quantization）**，依 SPEC 特例；不宣稱原本的 Gate 全部通過，Core 的正式結果、Gate 與事先登記的比較規則都不修改。最多三個假設、不擴張到 A、B 或 Optional；先登記假設、baseline、評測協定與停止條件（decision 019，設計中）。
+- **2026-10-16（台灣）使用者決定進入 Advanced C（vector quantization）**，依 SPEC 特例；不宣稱原本的 Gate 全部通過，Core 的正式結果、Gate 與事先登記的比較規則都不修改。最多三個假設、不擴張到 A、B 或 Optional；先登記假設、baseline、評測協定與停止條件（decision 019：設計已採用，審查修訂中）。工程改善（測試、API 易用性、文件、Demo）可以並行，但不得污染研究結果（019 的隔離規則）。
 - **使用者要求開跑前也看 GPU 與 RAM**（其他工作可能不取 lock）：等待腳本改用 `benchmarks/machine_quiet.py`（lock、背景 CPU、load、GPU ≤ 20%、記憶體 free ≥ 30%、電力模式）。
 - **Core 全部完成**：兩個資料集的正式 run 與報告、Gate profiling、README 的結果段落（GloVe、文字、Gate profiling）都已 commit。
 - **文字 4 份 complete**（008-v4、高效能、140W）：1 `20261015T191333Z-formal`、2 `20261015T210125Z-formal`、3 `20261015T222221Z-formal`、
@@ -281,12 +281,9 @@
 ### 目前需要使用者
 
 - （已決定）文字的電力模式（016：高效能）、電量規則（017：取消）、變壓器（018：70W 或 140W）、開始時不看電量。
-- **是否進 Advanced（Gate 證據已齊全，2026-10-16）**：依 015，兩個資料集都不是 `gap`，SPEC Gate 的條件 3 不成立。選項：
-  (a) 適用 SPEC 特例（Core 已很接近 hnswlib）：Advanced 改聚焦 C. vector quantization frontier；
-  (b) 以看到結果之後的觀察與 profiling 的瓶頸（100 維時 visited set 約 4 成）為假設，做 B. optimization ablation（例如 visited set 改成陣列 / epoch 標記），
-      需要使用者明示接受「Gate 條件 3 依事先登記的規則不成立」；
-  (c) 不進 Advanced，以目前的 Core 結果收尾。
-  由使用者決定；Advanced 最多三個假設驅動的實驗（SPEC）。
+- **（已決定，2026-10-16 台灣時間）進入 Advanced C：vector quantization**，依 SPEC 特例（使用者的判斷，不是 015 的讀值）；不宣稱原本的 Gate 全部通過。
+  使用者另外決定：採用 decision 019 的設計（SQ8、H1 / H2、5 個臂、Rust 5 seeds / FAISS 3 seeds）、記憶體主要指標維持 014 的 phys_footprint、
+  C 做完就封版（不保留第三個名額）。019 草稿經獨立審查（17 個 findings 全部採用），修訂後在分支 `prereg-quant` 上事先登記。
 - **GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
   是否在看過結果之後補跑 `glove-formal-8`（需另寫 decision，標明是看過結果之後、只因 hygiene 標記），由使用者決定；預設照實報告「只有含標記點的讀值」。
 - **Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。
