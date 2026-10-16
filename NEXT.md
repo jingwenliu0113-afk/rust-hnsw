@@ -15,13 +15,16 @@
      - H1 前提（反組譯）**成立**：`results/quant/premise.json`，binding SHA-256 `a208618a…`。
      - FAISS 移植可行，不採用備案。
   5. ✔ 10 份 formal config 與 `QUANT_CONFIGS` 已在 dca22c9，與附錄逐字相同（測試比對）。
-  6. **下一步：真實資料的 correctness smoke**（heavy lock、machine_quiet、smoke 模式），兩份 smoke config 已 commit。見「下一步」第 7 點。
+  6. ✔ 真實資料的 correctness smoke（2026-10-17 03:55–04:33 台灣時間；019 的第二則補記）：
+     - run：`20261016T195505Z-smoke`、`20261016T201035Z-smoke`，都是 complete、沒有標記。
+     - F、R、P 與 Core 的 ids 逐位元相同；FAISS 的移植 graph 相同；timeout 不需要上調。
+     - 看到 smoke 之後的觀察（不是結論）：GloVe 上 F 的搜尋比 R 慢約兩成，由 C4 量化。
+  7. **下一步：10 份 C formal**（「下一步」第 7 點的第 4 項）。
 - **審查發現的已知事實（不改判定規則）**：加入 quant 模組之後，Core 的原始碼沒變，但 hnsw crate 的 codegen 變了。
   - `search_layer` 把 visited set 的 `HashMap::insert` inline 進來了。紀錄在 `results/quant/core-codegen.json`，由 `scripts/probe_core_codegen.py` 產生。
   - H1、H2 不受影響（F、S 在同一個 binary）。
   - C5 預期依構造會「不一致」，原因已知，報告要照實註明；C6 讀為「漂移加上 codegen 差異」。見 019 的補記第 5 節。
 - **使用者 2026-10-16 的提醒**：Mac 上有沒取 lock 的工作在跑，開跑前要看 CPU、GPU 與 RAM。等待腳本會用 `benchmarks.machine_quiet` 檢查這些。
-- 2026-10-17 01:10（台灣）1 分鐘 load 約 11（使用者的其他工作），還不能跑 heavy 的步驟。
 
 - **2026-10-16（台灣）使用者決定進入 Advanced C（vector quantization）**，依 SPEC 特例；不宣稱原本的 Gate 全部通過，Core 的正式結果、Gate 與事先登記的比較規則都不修改。最多三個假設、不擴張到 A、B 或 Optional；先登記假設、baseline、評測協定與停止條件（decision 019：已事先登記）。工程改善（測試、API 易用性、文件、Demo）可以並行，但不得污染研究結果（019 的隔離規則）。
 - **使用者要求開跑前也看 GPU 與 RAM**（其他工作可能不取 lock）：等待腳本改用 `benchmarks/machine_quiet.py`（lock、背景 CPU、load、GPU ≤ 20%、記憶體 free ≥ 30%、電力模式）。

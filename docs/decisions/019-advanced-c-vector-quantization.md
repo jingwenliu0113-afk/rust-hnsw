@@ -1261,6 +1261,39 @@
   - C formal 開始之前，若 `crates/` 有任何改動，要以 formal 的 commit 重跑 `scripts/probe_core_codegen.py`，舊的紀錄改名保留。
   - formal 的 commit 與 dca22c9 的 `crates/` 相同時，本紀錄直接適用。
 
+## 補記（2026-10-17，correctness smoke 之後、第一份 C formal 之前）：§9 第 6 步
+
+- **執行**：
+  - 等待腳本連續 3 次確認 `machine_quiet` 成立（`--powermode 2`）之後，在 heavy lock 下以 smoke 模式執行：
+    `./scripts/formal_launcher.sh … --powermode 2 --skip-idle --mode smoke`。
+  - run 的條件：commit 3b69923、git 乾淨、協定 008-v5；binding SHA-256 `a208618a…`，與 premise 相同（補記第 3 節）。
+- **run**：兩份都是 complete，10 個子 process 全部 ok、沒有任何 hygiene 標記。
+
+  | 資料集 | run | 時段（UTC） |
+  | --- | --- | --- |
+  | GloVe | `20261016T195505Z-smoke` | 2026-10-16 19:55–20:10 |
+  | 文字 | `20261016T201035Z-smoke` | 20:10–20:25 |
+
+- **核對**（`benchmarks.quant_smoke`，只檢查 §9 第 6 步列出的項目）：
+  - **F、R、P 與 Core 的 ids**：F、R、P 與 §2 登記的 Core run，在 seed 1 的共同 ef 上比對；另比對 C 內 F 與 R 的所有 ef。
+    全部逐位元相同：GloVe 9 組、文字 12 組。
+  - **Q 的移植**（`--port`，再次確認 `machine_quiet` 之後在 heavy lock 下，20:31–20:33 UTC）：
+    以 Q adapter 的同一段建圖程式重建 seed 1；在 `del flat` 之前，graph 與 Flat 完全相同（兩個資料集都沒有差異），重建的 Q 在 e\* 的 ids 與 smoke run 相同。
+  - **結果格式、010 §6、null call 與 warm-up**：由 runner 在 smoke 模式本身檢查，兩份都通過（status complete）。
+- **timeout**（§5 的規則：最慢的臂在負載下的上限 × 5，進位到 600 的倍數）：
+  - 外推方式：以 smoke 每個 ef 點的時間，依「每點時間與 ef 成正比」外推到 formal 的 10 個 ef 點，再加上 build 與其他時間。
+  - 最慢的都是 F：
+    - GloVe 約 530 s → 530 × 1.25 × 5 ≈ 3,313 → 3,600。登記值是 4,200（只有 Rust 的 config）與 6,000（含 FAISS）。
+    - 文字約 396 s → 396 × 1.25 × 5 ≈ 2,473 → 3,000。登記值是 3,600。
+    - 再乘上 §5 的 Rust 不確定倍數 1.2，GloVe 約 3,976 → 4,200、文字約 2,968 → 3,000，仍然不超過登記值。
+  - 結論：都不需要上調，10 份 config 維持登記的內容。
+- **看到 smoke 之後的觀察（不是結論；smoke 的數字不得用於任何結論）**：
+  - GloVe 三個 ef 點的搜尋時間，F 合計約 197 s、R 約 163 s，F 比 R 長約兩成；文字兩者差不多（約 81 s 與 82 s）。
+  - 這正是 C4（路徑失真）要量的東西，可能的來源是 kernel 的函式呼叫（`#[inline(never)]`，§4）。
+  - smoke 之後依第 6 步不得修改程式（這不是 correctness bug）。formal 的 C4 若判 path-distorted，H1 照登記的規則在新路徑內判定，不得寫成 Core 路徑上的效果。
+  - H1、H2 比的是 F 對 S，兩者的函式邊界相同，所以不受影響。
+- **變壓器**：smoke 時接的是 Apple 140W。依 §5，C 報告以第一份 C formal run 實際使用的變壓器為準。
+
 ## 附錄：formal config（逐字登記）
 
 在實作 commit 中加入 `benchmarks/configs/` 的檔案，內容必須與下列範本代入後完全相同；唯一的例外是依 §5 上調的 `child_timeout_s`。`benchmarks/quant_report.py` 的 `QUANT_CONFIGS` 恰好登記這 10 份，每個資料集 5 份。
