@@ -279,3 +279,4 @@ Gate profiling（decision 015：依正式 run 選各實作 Recall@10 ≥ 0.95 �
 - [016 文字 workload 的電力模式不一致：作廢 text-formal-2、3，全部以高效能模式重跑](docs/decisions/016-text-power-mode-voided-runs.md)
 - [017 取消電量下降的作廢規則（協定 008-v3）](docs/decisions/017-remove-battery-drop-rule.md)
 - [018 允許 Apple 原廠 140W 變壓器（協定 008-v4）](docs/decisions/018-allow-140w-adapter.md)
+- [019 Advanced C：vector quantization 的假設、表示與評測協定（事先登記）](docs/decisions/019-advanced-c-vector-quantization.md)
