@@ -4,8 +4,9 @@
 # 每 60 秒檢查一次：heavy lock 沒人持有、背景沒有 heavy workload（014）、1 分鐘 load < 4.0；連續 3 次都成立才啟動。
 # 批次以新的 session（setsid）啟動，不受啟動它的終端或 Claude session 結束影響。lock 被別人先拿走時不搶占，回去繼續等。
 #
-# 用法：./scripts/formal_launcher.sh <batch log> <最長等待秒數> [--powermode N] [--skip-idle] <config>...
+# 用法：./scripts/formal_launcher.sh <batch log> <最長等待秒數> [--powermode N] [--skip-idle] [--mode formal|smoke] <config>...
 # --powermode N：另外要求 `pmset -g` 的 powermode 是 N 才算可以開始，並傳給 formal_batch.sh 在每份 config 前再確認（decision 016）。
+# --mode 照原樣傳給 formal_batch.sh（預設 formal）。
 # 結束：啟動成功印出 LAUNCHED（exit 0）；等超過上限印出 GAVE_UP（exit 2）。批次本身的進度看 <batch log>。
 set -u
 cd "$(dirname "$0")/.."
@@ -14,7 +15,7 @@ PMSET=${FORMAL_PMSET:-pmset}
 POLL_S=${FORMAL_POLL_S:-60}
 LOCK_DIR=/tmp/ai-portfolio-mac-heavy.lock
 if [ "$#" -lt 3 ]; then
-  echo "usage: $0 <batch log> <max wait seconds> [--powermode N] [--skip-idle] <config>..." >&2
+  echo "usage: $0 <batch log> <max wait seconds> [--powermode N] [--skip-idle] [--mode formal|smoke] <config>..." >&2
   exit 64
 fi
 log=$1

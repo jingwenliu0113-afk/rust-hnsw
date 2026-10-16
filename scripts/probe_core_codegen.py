@@ -7,6 +7,7 @@
   （hnsw crate 沒有相依，根目錄的 Cargo.toml 也沒有 [profile]，所以與 maturin 編譯的 binding 中的 hnsw crate 是同一份設定）。
 - `cargo build --release --offline -p hnsw --lib`，再以 `ar x` 拆出 rlib 的 object、`otool -tV` 反組譯每個函式。
 - 指令序列先正規化（位址、區域標籤、crate disambiguator `Cs…_`、`.llvm.<hash>`），再比對名稱不含 quant 模組的函式。
+- 未連結的 object 中 `bl` 的目標只是位址，所以這裡只比對指令序列與指令數；呼叫了哪些函式要在連結後的 binding 上看。
 - 只描述，不判定任何東西；只編譯零相依的 hnsw crate（各約數秒），不是重工作。
 """
 
@@ -19,7 +20,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -74,10 +74,6 @@ def _demangle(names: list[str]) -> dict[str, str]:
     return dict(zip(names, out))
 
 
-def _calls(ins: list[str]) -> dict[str, int]:
-    return dict(Counter(i.split("\t", 1)[1] for i in ins if i.startswith("bl\t") and "\t" in i))
-
-
 def compare(a: dict, b: dict) -> dict:
     core = lambda funcs: {n for n in funcs if "5quant" not in n}  # noqa: E731（v0 / legacy mangling 中的模組名）
     a_core, b_core = core(a), core(b)
@@ -86,8 +82,7 @@ def compare(a: dict, b: dict) -> dict:
     differ = [n for n in shared if a[n] != b[n]]
     return {
         "identical": len(shared) - len(differ),
-        "different": [{"function": names[n], "instructions": [len(a[n]), len(b[n])],
-                       "calls": [_calls(a[n]), _calls(b[n])]} for n in differ],
+        "different": [{"function": names[n], "instructions": [len(a[n]), len(b[n])]} for n in differ],
         "only_in_a": sorted(names[n] for n in a_core - b_core),
         "only_in_b": sorted(names[n] for n in b_core - a_core),
     }

@@ -87,6 +87,26 @@ def test_the_batch_stops_at_the_first_run_that_is_not_complete(fake):
     assert "STOP b-fail.toml exit=1" in text
 
 
+def test_the_batch_passes_the_smoke_mode_to_the_runner(fake):
+    # decision 019 §9 第 6 步：correctness smoke 也經由同一個批次（heavy lock、機器閒置）執行。
+    result, markers, calls, text = batch(fake, "--powermode", "2", "--skip-idle", "--mode", "smoke", "a.toml", "b.toml")
+    assert result.returncode == 0 and calls == ["a.toml --mode smoke", "b.toml --mode smoke"]
+    assert markers == ["RUN_START", "RUN_END", "RUN_START", "RUN_END", "ALL_DONE"]
+
+
+def test_the_batch_measures_idle_load_before_a_smoke_unless_skipped(fake):
+    result, markers, calls, text = batch(fake, "--mode", "smoke", "a.toml")
+    assert result.returncode == 0 and calls == ["a.toml --mode smoke"]
+    assert markers[:2] == ["IDLE_START", "IDLE_END"]
+
+
+@pytest.mark.parametrize("mode", ["Smoke", "", "aborted"])
+def test_the_batch_rejects_an_unknown_mode_before_running_anything(fake, mode):
+    result, markers, calls, text = batch(fake, "--skip-idle", "--mode", mode, "a.toml")
+    assert result.returncode == 64 and calls == [] and markers == []
+    assert "unknown mode" in result.stderr
+
+
 def test_the_batch_runs_only_in_the_required_power_mode(fake):
     # decision 016：同一個資料集的 formal run 用同一個電力模式；每份 config 開始前確認。
     result, markers, calls, text = batch(fake, "--powermode", "2", "--skip-idle", "a.toml", "b.toml")
