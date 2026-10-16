@@ -137,6 +137,7 @@ scripts/test.sh     一鍵跑全部 correctness 檢查
 scripts/profile.sh  以 macOS `sample` 對 build / search 取樣（decision 009）
 docs/decisions/     decision logs
 tools/with-mac-lock 正式 benchmark 用的 Mac heavy lock
+examples/           API 的 Demo（synthetic 資料，數字不是研究結果）
 ```
 
 ## 開發環境
@@ -149,6 +150,34 @@ source "$HOME/.cargo/env"
 uv venv --python 3.13 .venv
 uv pip install --python .venv/bin/python -r requirements-dev.txt
 ```
+
+## 快速上手（Python）
+
+`./scripts/test.sh`（或 `maturin develop --release`）會把 binding 安裝到 `.venv`。最小用法：
+
+```python
+import numpy as np
+import rust_hnsw
+
+data = np.random.default_rng(0).standard_normal((10_000, 64)).astype(np.float32)
+data /= np.linalg.norm(data, axis=1, keepdims=True)        # cosine 距離：輸入必須是 unit vectors（decision 001）
+
+index = rust_hnsw.HnswIndex(64, m=16, ef_construction=200, seed=1)
+index.add(data)                                             # 依 row 順序插入；id 就是 row 編號
+ids, distances = index.search(data[:5], 10, 64)             # (queries, k, ef_search) → int64 / float32，shape (5, 10)
+index.save("demo.hnsw")
+same = rust_hnsw.HnswIndex.load("demo.hnsw")                # 讀回的 index 給出完全相同的結果
+```
+
+- `search` 是一次批次呼叫；結果不足 k 時補 `-1` / `+inf`。距離是 cosine distance（`1 − 內積`，範圍 [0, 2]）。
+- `rust_hnsw.ExactIndex(dim)` 是 brute-force 的 exact search，只用來產生 ground truth 與 correctness 檢查。
+- 完整的 Demo（建 index、不同 `ef_search` 的 Recall@10、存檔與讀回）：
+
+```bash
+.venv/bin/python examples/quickstart.py
+```
+
+Demo 用隨機產生的 synthetic 向量，只示範 API，印出的數字**不是研究結果**。
 
 ## 測試
 
