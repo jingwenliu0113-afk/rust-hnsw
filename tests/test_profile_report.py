@@ -53,3 +53,27 @@ def test_top_of_stack_parses_counts_and_shares():
 def test_top_of_stack_requires_the_section():
     with pytest.raises(ValueError, match="top of stack"):
         top_of_stack("Call graph:\n")
+
+
+STRIPPED_REPORT = """\
+Sort by top of stack, same collapsed (when >= 5):
+        ???  (in libfaiss.dylib)  load address 0x109d5c000 + 0x2da19c  [0x10a03619c]        300
+        ???  (in libfaiss.dylib)  load address 0x109d5c000 + 0x7fb20  [0x109ddbb20]        100
+        free_tiny  (in libsystem_malloc.dylib)        100
+        ???  (in <unknown binary>)  [0x1a5df40dc]        100
+
+"""
+
+
+def test_rows_without_symbols_are_kept_with_their_offset():
+    # 009 補記：pip 安裝的 libfaiss.dylib 沒有符號表；這些列原本被略過，free_tiny 因此被算成 100%。
+    rows = top_of_stack(STRIPPED_REPORT)
+    assert [(r.name, r.image, r.count) for r in rows] == [
+        ("??? +0x2da19c", "libfaiss.dylib", 300), ("??? +0x7fb20", "libfaiss.dylib", 100),
+        ("free_tiny", "libsystem_malloc.dylib", 100), ("??? [0x1a5df40dc]", "<unknown binary>", 100)]
+    assert rows[2].share == pytest.approx(100 / 600)
+
+
+def test_an_unparsed_line_is_an_error_not_a_silent_drop():
+    with pytest.raises(ValueError, match="unparsed"):
+        top_of_stack("Sort by top of stack, same collapsed (when >= 5):\n        something odd here\n\n")

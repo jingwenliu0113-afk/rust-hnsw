@@ -22,7 +22,7 @@
   | 文字（768 維，正式資料集） | 100,000 | 16 / 200 | 約 0.77 → 0.97 → 0.996 |
 
   完整 GloVe 上，ann-benchmarks 自帶的 neighbors 與本專案以 exact search 產生的 ground truth 完全一致。
-- 正式 benchmark 進行中：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；閒置 load 量測為 `ok`。GloVe 的 8 份已完成並產生正式報告，文字 workload 的 4 份還要在 Mac heavy lock 下跑（見 `NEXT.md`）。Gate 的讀法在看任何結果之前登記（decision 015）。兩個資料集的正式結果見下兩節；Gate profiling 完成後補上時間花在哪。
+- 正式 benchmark 進行中：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；閒置 load 量測為 `ok`。GloVe 的 8 份已完成並產生正式報告，文字 workload 的 4 份還要在 Mac heavy lock 下跑（見 `NEXT.md`）。Gate 的讀法在看任何結果之前登記（decision 015）。兩個資料集的正式結果與 Gate profiling 見下三節；是否進 Advanced 由使用者決定。
 
 ## 正式結果：glove-100-angular（標準 ANN 資料集）
 
@@ -103,7 +103,26 @@ frontier 取點不內插、有 hygiene 標記的點不進入主要讀值。
 **兩個資料集合起來（依 decision 015）**：兩個資料集的主要目標都不是「有差距」，所以 SPEC Gate 的「同 recall 下與 hnswlib 有差距」**不成立**；
 「無法區分」不等於「很接近 hnswlib」，是否適用 SPEC 的特例（Advanced 改聚焦 vector quantization）由使用者判斷。
 看到結果之後的描述（不是判讀）：100 維的 GloVe 上 hnswlib 在同 ef、同 recall 時快 1.22–1.38 倍，768 維的文字上只快 6–8%；FAISS 在兩者都最快（GloVe 1.6–2.2 倍、文字 2.9–4.5 倍）。
-Gate profiling（decision 015 §2）的結果補上之前，不對差距的來源下結論。
+差距的來源見下一節的 Gate profiling。
+
+## Gate profiling：時間花在哪（decision 009、015 §2）
+
+條件：兩個資料集各取 (n, M, efC) = (100,000, 16, 200)、seed 1，各實作在正式 run 中 Recall@10 ≥ 0.95 的最小 ef
+（GloVe：rust-hnsw 304、hnswlib 304、faiss-hnsw 256；文字：三者都是 48）；macOS `sample` 每 1 ms 取樣，search 30 秒、build 300 秒；
+heavy lock、formal 的電力與背景條件。12 次取樣都通過 `gate_profile check`：取樣時的 Recall@10 與正式 run **完全相同**，git 乾淨、被取樣的程式與正式 run 相同。
+下表是 top-of-stack（self time）的占比；分類是看過取樣之後的解讀，原始排行在 `results/profiles/`。
+
+| 資料集 / 階段 | rust-hnsw | hnswlib | faiss-hnsw（近似，見下） |
+| --- | --- | --- | --- |
+| GloVe search | `search_layer`（含被 inline 的距離計算）47.9%；visited set（`HashMap` insert + rehash，SipHash）**43.6%**；heap 7.4% | 距離計算 `InnerProductDistance` 55.5%；`searchBaseLayerST`（含陣列式 visited list）42.4% | ≈ `HNSW::search` 87.6%；≈ 距離 11.9% |
+| GloVe build | `search_layer` 38.9%；visited set **38.4%**；`add` 12.4%；heap 7.4% | 距離 51.3%；`searchBaseLayer` 38.7%；鄰居選擇 5.2% | ≈ `add_links_starting_from` 68.3%；≈ 距離 20.1% |
+| 文字 search | `search_layer` 84.8%；`greedy_search` 7.3%；visited set 6.4% | 距離 92.0%；`searchBaseLayerST` 7.5% | ≈ 距離 81.3%；≈ `HNSW::search` 18.2% |
+| 文字 build | `search_layer` 69.3%；`add` 19.5%；visited set 6.8% | 距離 90.9%；`searchBaseLayer` 7.2% | ≈ 距離 78.0%；≈ `add_links_starting_from` 18.5% |
+
+- rust-hnsw 的距離計算被 inline 進 `search_layer`，無法單獨拆出（009 已知限制）；拆開需要另寫 decision（例如 `xctrace` 搭配 debug line info）。
+- faiss-cpu 的 `libfaiss.dylib` 沒有符號表，FAISS 的分類以「之前最近的 text 符號」近似（009 補記），只看大類。
+- 看到取樣之後的描述（不是事先登記的判讀）：100 維時，rust-hnsw 約四成的時間花在以 `std::collections::HashMap`（SipHash）實作的 visited set，
+  hnswlib 用陣列式的 visited list，這部分不在它的排行前段；768 維時距離計算占絕大部分，兩者的 visited set 開銷都變小，與文字資料上兩者 QPS 相近一致。
 
 ## 目錄
 

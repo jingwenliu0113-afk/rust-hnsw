@@ -152,6 +152,8 @@ def _check_one(records, dataset, impl, phase, selected, profiles, changed_files)
             problems.append(f"{path} not found")
         elif path.stat().st_mtime < meta_path.stat().st_mtime:
             problems.append(f"{path} is older than {meta_path.name} (left over from an earlier attempt)")
+        elif not path.read_text(encoding="utf-8", errors="replace").strip():
+            problems.append(f"{path} is empty")  # 009 補記：排行是空的就不是證據
     args = meta.get("args", {})
     for key, value in expected_args(dataset, impl, phase, selected).items():
         if args.get(key) != value:

@@ -67,3 +67,14 @@ SPEC 的 Gate 要求「profiler 已顯示時間主要花在哪」。Advanced 的
 ## 補記（2026-10-09）：Gate profiling 的參數
 
 - 格點、目標 recall、ef 的選法、取樣時間與取樣後的 recall 核對，在看任何正式效能結果之前由 decision 015 §2 固定（`benchmarks/gate_profile.py`）。
+
+## 補記（2026-10-16，Gate profiling 之後）：沒有符號的列與 FAISS 的歸屬
+
+- `profile_report.py` 原本只解析「`symbol (in image) count`」的列，沒有符號的列（`??? (in libfaiss.dylib) load address … + 0xOFF [0x…] count`、
+  `??? (in <unknown binary>) [0x…] count`）被**默默略過**，而且比例只以解析到的列為分母。結果：FAISS GloVe search 的排行是空的，
+  文字 search 的排行把 18 個 malloc 樣本當成 100%（實際總數約 2.2 萬）。Rust 與 hnswlib 的 build 也各有少量位址列被略過。
+- 修正：沒有符號的列照樣保留（以映像檔內的位移或位址表示），任何無法解析的列一律報錯；`gate_profile check` 另外要求排行不得為空。
+  12 份排行以修正後的程式從**原始取樣檔**重新產生（取樣本身沒有問題，不重新取樣）。
+- pip 安裝的 `faiss-cpu`（`libfaiss.dylib`）沒有符號表。FAISS 的歸屬改以 `nm -n` 的 text 符號近似：每個位移歸給它**之前最近的符號**。
+  這是看過取樣之後才加的、近似的解讀：被 inline 或沒有匯出的函式會算到前一個符號，只用來看大類，不作精確結論。
+- SPEC 的 Gate 以 hnswlib 為準；Rust 與 hnswlib 都有完整的符號。

@@ -237,3 +237,12 @@ def test_only_the_profiled_code_is_compared_with_the_formal_commits():
     assert any(name.startswith("crates/") for name in gate_profile.changed_profiled_files("ddcb27d", "7961673"))
     with pytest.raises(PlanError, match="cannot compare"):
         gate_profile.changed_profiled_files("0" * 40, "41e4ea0")
+
+
+def test_an_empty_ranking_is_not_evidence(tmp_path):
+    write_samples(tmp_path)
+    (tmp_path / "gate-glove-faiss-hnsw-search.top.txt").write_text("")
+    results = {(r["implementation"], r["phase"]): r for r in
+               check(formal_records(), profiles=tmp_path, changed_files=lambda a, b: [])}
+    assert any("is empty" in p for p in results[("faiss-hnsw", "search")]["problems"])
+    assert results[("rust-hnsw", "search")]["ok"] is True
