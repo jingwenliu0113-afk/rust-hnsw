@@ -9,7 +9,9 @@ from benchmarks.metrics import TIE_EPS
 # 008-v2：使用者 2026-10-09 的決定（decision 014）：formal 的電力條件、背景 heavy workload 的 gate、index memory 改以 phys_footprint 為主。
 # 008-v3：使用者 2026-10-11 的決定（decision 017）：取消電量下降的作廢規則，電量只記錄。
 # 008-v4：使用者 2026-10-15 的決定（decision 018）：Apple 原廠 70W 或 140W 變壓器皆可；同一個 run 內不得更換。
-PROTOCOL_VERSION = "008-v4"
+# 008-v5：decision 019（Advanced C，使用者 2026-10-16 決定）：adapter 沒有 save_native 時 serialized_bytes 為 null、
+# 子 process 最後的 relief 診斷（MEMORY_RELIEF）。計時常數、gate、hygiene 標記與電力條件都與 008-v4 相同；只用於 C 的 run。
+PROTOCOL_VERSION = "008-v5"
 
 # 主要量測的 k；Recall@1 另外以 k = 1 的整批 search 取得（008 §7）。
 K = 10
@@ -68,6 +70,11 @@ BACKGROUND_POLL_S = 15
 # 014：index memory 的主要指標是 phys_footprint 的增量；rss 的增量保留為輔助指標。
 INDEX_MEMORY_PRIMARY = "index_footprint_bytes"
 INDEX_MEMORY_SUPPLEMENTARY = "index_memory_bytes"
+# 019 §4（008-v5）：relief 診斷的時點。在所有計時點與 save_native 之後才做，不改變計時與 014 讀值所處的 allocator 狀態；
+# 結果（M_relief）只是診斷，主要指標仍是 INDEX_MEMORY_PRIMARY（019 §6、§13）。所有實作走同一段程式。
+MEMORY_RELIEF = ("malloc_zone_pressure_relief(NULL, 0) once at the end of the child, after every timed point and after "
+                 "save_native (skipped when the adapter has none); then after_relief = _memory(); "
+                 "index_footprint_relieved_bytes and index_memory_relieved_bytes are relative to the baseline (decision 019 §4)")
 
 
 def protocol_record() -> dict:
@@ -99,6 +106,7 @@ def protocol_record() -> dict:
         "background_poll_s": BACKGROUND_POLL_S,
         "index_memory_primary": INDEX_MEMORY_PRIMARY,
         "index_memory_supplementary": INDEX_MEMORY_SUPPLEMENTARY,
+        "memory_relief": MEMORY_RELIEF,
         "tie_eps": TIE_EPS,
     }
 

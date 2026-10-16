@@ -38,6 +38,19 @@ def test_driver_announces_ready_and_exits(impl, phase):
     assert result.stdout.startswith("READY "), result.stdout
 
 
+@pytest.mark.parametrize("impl", ["rust-hnsw-fp32g", "rust-hnsw-sq8"])
+@pytest.mark.parametrize("phase", ["build", "search"])
+def test_driver_runs_the_quant_arms(impl, phase):
+    # decision 019 §8 取樣 F 與 S；Q（FAISS）不取樣，所以不在 profile.ADAPTERS 中。
+    result = run_driver(
+        "--impl", impl, "--phase", phase, "--seconds", "0.2",
+        "--synthetic", "500,16,50", "--m", "8", "--ef-construction", "32",
+        "--seed", "1", "--ef", "32", "--k", "10",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("READY "), result.stdout
+
+
 def test_driver_reads_npy_files(tmp_path):
     rng = np.random.default_rng(0)
     np.save(tmp_path / "data.npy", rng.standard_normal((300, 8)).astype(np.float32))

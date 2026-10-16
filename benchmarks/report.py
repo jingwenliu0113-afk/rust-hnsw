@@ -841,6 +841,12 @@ IMPL_STYLE = {
     "rust-hnsw": {"color": "#2a78d6", "marker": "o"},
     "hnswlib": {"color": "#eb6834", "marker": "s"},
     "faiss-hnsw": {"color": "#1baf7a", "marker": "^"},
+    # Advanced C（decision 019 §6）的三個臂；Core 的報告沒有這些實作，輸出不變。C 的圖同時畫 R、F、S、P、Q 五個臂
+    # （沒有 hnswlib），這五色以 validator 的 all-pairs 驗過：CVD 最差 ΔE 6.9 落在 6–8 的下限帶，
+    # 所以同樣依賴標記形狀與線尾的直接標籤作為第二編碼。
+    "rust-hnsw-fp32g": {"color": "#4a3aa7", "marker": "D"},
+    "rust-hnsw-sq8": {"color": "#e34948", "marker": "v"},
+    "faiss-hnsw-sq8": {"color": "#008300", "marker": "P"},
 }
 FRONTIER_PANELS = (  # (指標, 比例, 單位標籤, 越高越好)
     ("qps", 1.0, "QPS (median over seeds)", True),
@@ -998,11 +1004,14 @@ def _config_path(record: dict) -> str | None:
     return (checks.get("config") or {}).get("path")
 
 
-def check_formal_set(records: list[dict], run_dirs, excluded_dirs, roots=None) -> None:
+def check_formal_set(records: list[dict], run_dirs, excluded_dirs, roots=None, registry=FORMAL_CONFIGS) -> None:
     """formal 報告（013 §5、010 §3）：恰好包含該資料集每一份 formal config 各一個 run；
-    同一份 config 另外的 formal run 不得被略過——complete / incomplete 的一律拒絕，失敗的必須以 --excluded 列出。"""
+    同一份 config 另外的 formal run 不得被略過——complete / incomplete 的一律拒絕，失敗的必須以 --excluded 列出。
+
+    `registry`：資料集 → formal config 的登記表。預設是 Core 的 `FORMAL_CONFIGS`；Advanced C 的報告傳入
+    `quant_report.QUANT_CONFIGS`（decision 019 §4）。只有登記表內的 config 會被掃描，所以兩份報告互不合併對方的 run。"""
     dataset = records[0]["dataset"]["name"]
-    expected = FORMAL_CONFIGS.get(dataset)
+    expected = registry.get(dataset)
     if expected is None:
         raise ReportError(f"no formal configs are registered for {dataset!r} (013 §5)")
     paths = [_config_path(r) for r in records]

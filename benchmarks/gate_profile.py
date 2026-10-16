@@ -139,12 +139,26 @@ def changed_profiled_files(commit_a: str, commit_b: str, repo=REPO) -> list[str]
 def _check_one(records, dataset, impl, phase, selected, profiles, changed_files) -> dict:
     stem = Path(profiles) / profile_name(dataset, impl, phase)
     result = {"implementation": impl, "phase": phase, "problems": []}
-    problems = result["problems"]
+    formal_recall = selected[impl]["recall10"] if phase == "search" else None
+    meta = check_evidence(records, stem, expected_args(dataset, impl, phase, selected), formal_recall, changed_files,
+                          result["problems"])
+    if meta is not None and phase == "search":
+        result.update(ef=selected[impl]["ef"], formal_recall10=formal_recall, profile_recall10=meta.get("recall_at_10"))
+    result["ok"] = not result["problems"]
+    return result
+
+
+def check_evidence(records, stem: Path, expected: dict, formal_recall10, changed_files, problems: list) -> dict | None:
+    """一個取樣（輸出檔的前綴 `stem`）是否符合 015 §2 的證據條件；不符的原因附加到 `problems`。
+
+    `expected` 是取樣前紀錄的 `args` 必須相同的參數；`formal_recall10` 不是 None 時（search 階段），
+    取樣時的 Recall@10 必須與它完全相同。回傳取樣前紀錄（找不到時為 None）。
+    decision 019 §8 的 `quant_profile` 以不同的檔名與 ef 重用這段核對。
+    """
     meta_path = stem.with_name(stem.name + ".json")
     if not meta_path.exists():
         problems.append(f"{meta_path} not found")
-        result["ok"] = False
-        return result
+        return None
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     for suffix in (".sample.txt", ".top.txt"):
         path = stem.with_name(stem.name + suffix)
@@ -155,7 +169,7 @@ def _check_one(records, dataset, impl, phase, selected, profiles, changed_files)
         elif not path.read_text(encoding="utf-8", errors="replace").strip():
             problems.append(f"{path} is empty")  # 009 補記：排行是空的就不是證據
     args = meta.get("args", {})
-    for key, value in expected_args(dataset, impl, phase, selected).items():
+    for key, value in expected.items():
         if args.get(key) != value:
             problems.append(f"args.{key} = {args.get(key)!r}, expected {value!r}")
     if meta.get("lock", {}).get("held_by_ancestor") is not True:
@@ -179,13 +193,11 @@ def _check_one(records, dataset, impl, phase, selected, profiles, changed_files)
                         if versions.get(name) != r["metadata"]["versions"].get(name)})
     if differing:
         problems.append(f"package versions differ from the formal run: {differing}")
-    if phase == "search":
+    if formal_recall10 is not None:
         recall = meta.get("recall_at_10")
-        result.update(ef=selected[impl]["ef"], formal_recall10=selected[impl]["recall10"], profile_recall10=recall)
-        if recall != selected[impl]["recall10"]:
-            problems.append(f"Recall@10 {recall!r} differs from the formal run's {selected[impl]['recall10']!r}")
-    result["ok"] = not problems
-    return result
+        if recall != formal_recall10:
+            problems.append(f"Recall@10 {recall!r} differs from the formal run's {formal_recall10!r}")
+    return meta
 
 
 def check(records: list[dict], profiles=None, changed_files=None) -> list[dict]:

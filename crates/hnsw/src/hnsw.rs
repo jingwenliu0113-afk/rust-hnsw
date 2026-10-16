@@ -9,8 +9,10 @@ use crate::rng::SplitMix64;
 use crate::{BatchResult, HnswError, Neighbor, NodeId};
 
 mod persist;
+mod quant;
 
 pub use persist::FORMAT_VERSION;
+pub use quant::{MemoryAccounting, QuantIndex, Representation, SearchStats, sq8_train_encode};
 
 /// `m` 的上限（decision 005）：保證 `2m` 放得進 `NodeId` 與任何平台的 usize。
 pub const MAX_M: usize = (NodeId::MAX / 2) as usize;

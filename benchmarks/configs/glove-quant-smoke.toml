@@ -1,0 +1,16 @@
+# Advanced C（decision 019）的真實資料 correctness smoke（019 §9 第 6 步）：glove-100-angular n = 100,000、(M, efC) = (16, 200)、
+# seed 1、原始順序，五個臂；ef 只取 019 §9 第 6 步登記的三個點。一律先通過 machine_quiet，再在 heavy lock 下以 smoke 模式執行（019 §5）。
+# 只檢查結果格式、010 §6、null call 與 warm-up、F / R / P 與 Core 的 ids 逐位元相同、Q 的移植與每個子 process 的時間
+# （benchmarks.quant_smoke）；數字不得用於任何結論。implementations 的順序與 timeout 沿用 quant-glove-seed-1.toml。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw-sq8", "faiss-hnsw", "rust-hnsw-fp32g", "faiss-hnsw-sq8", "rust-hnsw"]
+ef_search = [64, 304, 768]
+child_timeout_s = 6000
+
+[[sweep]]
+n = [100000]
+m = [16]
+ef_construction = [200]
+seeds = [1]
+shuffles = []

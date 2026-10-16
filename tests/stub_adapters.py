@@ -216,3 +216,42 @@ class ExitStub(ExactStub):
         if ef >= 20:
             os._exit(3)
         super().set_ef_search(ef)
+
+
+class NoSaveStub:
+    """沒有 `save_native` 的 adapter（019 的 rust-hnsw-fp32g、rust-hnsw-sq8 就是這樣）；其餘行為與 ExactStub 相同。
+
+    以組合而不是繼承 ExactStub，類別上才真的沒有 `save_native`。runner 必須把 serialized_bytes 記為 null（019 §4）。
+    """
+
+    name = "no-save-stub"
+
+    def __init__(self, m: int, ef_construction: int, seed: int) -> None:
+        self._inner = ExactStub(m, ef_construction, seed)
+
+    def build(self, data: np.ndarray) -> None:
+        self._inner.build(data)
+
+    def set_ef_search(self, ef: int) -> None:
+        self._inner.set_ef_search(ef)
+
+    def search(self, queries: np.ndarray, k: int):
+        return self._inner.search(queries, k)
+
+
+class TracingNoSaveStub(NoSaveStub):
+    """TracingStub 的呼叫紀錄，但沒有 `save_native`：019 §4 的 relief 必須照樣在所有計時點之後才做。"""
+
+    name = "tracing-no-save-stub"
+
+    def build(self, data):
+        _log(f"build:{data.shape[0]}")
+        super().build(data)
+
+    def set_ef_search(self, ef):
+        _log(f"ef:{ef}")
+        super().set_ef_search(ef)
+
+    def search(self, queries, k):
+        _log(f"search:{k},{queries.shape[0]},{self._inner._ef},{int(gc.isenabled())}")
+        return self._inner._exact(queries, k)

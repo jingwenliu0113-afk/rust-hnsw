@@ -24,10 +24,12 @@ from pathlib import Path
 import numpy as np
 
 from benchmarks import dataprep, datasets, environment, metrics, protocol
-from benchmarks.adapters import FaissHnsw, Hnswlib, RustHnsw
+from benchmarks.adapters import FaissHnsw, Hnswlib, RustHnsw, RustHnswFp32g, RustHnswSq8
 from benchmarks.interface import prepare_vectors
 
-ADAPTERS = {"rust-hnsw": RustHnsw, "hnswlib": Hnswlib, "faiss-hnsw": FaissHnsw}
+# Advanced C 的 F、S 用於 019 §8 的取樣；FAISS 沒有符號表，Q 不取樣（019 §8）。
+ADAPTERS = {"rust-hnsw": RustHnsw, "hnswlib": Hnswlib, "faiss-hnsw": FaissHnsw,
+            "rust-hnsw-fp32g": RustHnswFp32g, "rust-hnsw-sq8": RustHnswSq8}
 REPO = Path(__file__).resolve().parents[1]
 
 

@@ -16,7 +16,10 @@ mod rng;
 pub use batch::{BatchResult, PADDING_ID};
 pub use error::{HnswError, PersistError};
 pub use exact::ExactIndex;
-pub use hnsw::{FORMAT_VERSION, HnswIndex, HnswParams, MAX_M};
+pub use hnsw::{
+    FORMAT_VERSION, HnswIndex, HnswParams, MAX_M, MemoryAccounting, QuantIndex, Representation,
+    SearchStats, sq8_train_encode,
+};
 
 /// 向量 id：依插入順序從 0 開始連續編號。
 pub type NodeId = u32;

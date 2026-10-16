@@ -10,9 +10,9 @@ from helpers import random_unit, tie_data
 
 
 def test_protocol_constants_match_decision_008():
-    """改動任何一項都必須另寫 decision log（008「對實驗的影響」；008-v2 見 decision 014，008-v3 見 decision 017，008-v4 見 decision 018）。"""
+    """改動任何一項都必須另寫 decision log（008「對實驗的影響」；008-v2 見 decision 014，008-v3 見 decision 017，008-v4 見 decision 018，008-v5 見 decision 019）。"""
     assert protocol.protocol_record() == {
-        "version": "008-v4",
+        "version": "008-v5",
         "k": 10,
         "recall_at_1_k": 1,
         "batch_warmup_calls": 1,
@@ -40,6 +40,10 @@ def test_protocol_constants_match_decision_008():
         "background_poll_s": 15,
         "index_memory_primary": "index_footprint_bytes",
         "index_memory_supplementary": "index_memory_bytes",
+        "memory_relief": "malloc_zone_pressure_relief(NULL, 0) once at the end of the child, after every timed point and "
+                         "after save_native (skipped when the adapter has none); then after_relief = _memory(); "
+                         "index_footprint_relieved_bytes and index_memory_relieved_bytes are relative to the baseline "
+                         "(decision 019 §4)",
         "tie_eps": TIE_EPS,
     }
 

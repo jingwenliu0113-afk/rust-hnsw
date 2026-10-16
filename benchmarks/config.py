@@ -11,6 +11,10 @@ IMPLEMENTATIONS = {
     "rust-hnsw": ("benchmarks.adapters:RustHnsw", "rust_hnsw"),
     "hnswlib": ("benchmarks.adapters:Hnswlib", "hnswlib"),
     "faiss-hnsw": ("benchmarks.adapters:FaissHnsw", "faiss"),
+    # Advanced C（decision 019 §3、§4）：F、S、Q。
+    "rust-hnsw-fp32g": ("benchmarks.adapters:RustHnswFp32g", "rust_hnsw"),
+    "rust-hnsw-sq8": ("benchmarks.adapters:RustHnswSq8", "rust_hnsw"),
+    "faiss-hnsw-sq8": ("benchmarks.adapters:FaissHnswSq8", "faiss"),
 }
 
 # 與 004 / 005 一致：2 ≤ M ≤ 2^31 − 1。

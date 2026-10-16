@@ -4,8 +4,10 @@
 - 只 import 受測的那一個 library，而且在記錄 baseline 與開始計時之前完成。
 - 不載入 ground truth、不計算 recall（由父 process 計算，008 §8）。
 - 每完成一個 ef 點就在 JSONL append 一行並 flush；crash 前完成的點因此會保留。
+- 最後（所有計時點與 save_native 之後）才做 relief 診斷，記錄 after_relief（008-v5，decision 019 §4）。
 """
 
+import ctypes
 import gc
 import importlib
 import json
@@ -55,6 +57,18 @@ def _memory() -> dict:
     return {"rss_bytes": ps_rss_bytes(), "ru_maxrss_bytes": ru_maxrss_bytes(), "phys_footprint_bytes": phys_footprint_bytes(),
             "reusable_bytes": vm["reusable_bytes"], "compressed_bytes": vm["compressed_bytes"],
             "compressed_lifetime_bytes": vm["compressed_lifetime_bytes"]}
+
+
+def _pressure_relief() -> None:
+    """請 malloc 把所有 zone 中已釋放、可回收的 page 還給系統（019 §4；ctypes 寫法沿用 scripts/probe_reusable_memory.py）。
+
+    只在子 process 最後呼叫一次（所有計時點與 save_native 之後），供 after_relief 的診斷讀值（M_relief）。
+    回傳值不記錄：014 的量法看的是之後 `_memory()` 的讀數。
+    """
+    libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    libc.malloc_zone_pressure_relief.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+    libc.malloc_zone_pressure_relief.restype = ctypes.c_size_t
+    libc.malloc_zone_pressure_relief(None, 0)
 
 
 def _percentiles(samples) -> dict:
@@ -255,12 +269,21 @@ def main(argv=None) -> int:
         )
 
     # 8. 搜尋之後的高水位（只作參考）；9. 原生序列化大小（最後才做，避免 I/O 落在計時區間）。
+    #    adapter 沒有 save_native（019 的 rust-hnsw-fp32g、rust-hnsw-sq8：不新增檔案格式）時記為 null（019 §4）。
     peak_after_search = ru_maxrss_bytes()
-    index_path = Path(spec["scratch_dir"]) / f"{spec['child_id']}.index"
-    adapter.save_native(str(index_path))
-    serialized_bytes = index_path.stat().st_size
-    index_path.unlink()
-    log.write("end", peak_rss_after_search_bytes=peak_after_search, serialized_bytes=serialized_bytes)
+    serialized_bytes = None
+    save_native = getattr(adapter, "save_native", None)
+    if save_native is not None:
+        index_path = Path(spec["scratch_dir"]) / f"{spec['child_id']}.index"
+        save_native(str(index_path))
+        serialized_bytes = index_path.stat().st_size
+        index_path.unlink()
+    # 10. relief 診斷（019 §4，008-v5）：所有計時點與 save_native 之後才請 allocator 釋放可回收的 page，再量一次記憶體。
+    #     計時與 014 讀值所處的 allocator 狀態因此不變；所有實作都走這同一段程式。index 仍然存活，所以這是 M_relief。
+    _pressure_relief()
+    after_relief = _memory()
+    log.write("end", peak_rss_after_search_bytes=peak_after_search, serialized_bytes=serialized_bytes,
+              after_relief=after_relief)
     return 0
 
 

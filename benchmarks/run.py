@@ -51,6 +51,14 @@ DISTANCE_KERNELS = {
     "rust-hnsw": "scalar f32 loop (decision 004; SIMD is Optional), release defaults without target-cpu=native",
     "hnswlib": "arm64: no hand-written SIMD; multiply auto-vectorized, sequential scalar reduction (decision 007 §8)",
     "faiss-hnsw": "official NEON wheel (faiss.get_compile_options)",
+    # Advanced C（decision 019 §3）：原始碼層級的事實；反組譯的前提檢查見 019 §2 / §9 第 4 步的補記。
+    "rust-hnsw-fp32g": "rust-hnsw's distance::cosine_distance_unit called from #[inline(never)] rhnsw_kernel_fp32 "
+                       "on a copied search path (decision 019 §3); release defaults without target-cpu=native",
+    "rust-hnsw-sq8": "#[inline(never)] rhnsw_kernel_sq8: asymmetric 1 - (b + sum_j w_j * code_j), f32 weights x u8 codes "
+                     "summed in order by iter().zip().map().sum::<f32>(), no hand-written SIMD, on the same copied "
+                     "search path (decision 019 §3); release defaults without target-cpu=native",
+    "faiss-hnsw-sq8": "official NEON wheel (faiss.get_compile_options); ScalarQuantizer QT_8bit + RS_minmax "
+                      "distance computer (decision 019 §3)",
 }
 HNSWLIB_COMPILE_FLAGS = "-O3 -march=native, inferred from hnswlib 0.8.0 setup.py (decision 007); not observed"
 
@@ -482,8 +490,17 @@ def _child_record(lines: list[dict], build_params: dict) -> tuple[dict, dict]:
             flags=flags,
         )
     if end is not None:
+        # adapter 沒有 save_native 時 serialized_bytes 為 null（019 §4），照原樣寫進 run.json。
         build.update(
             peak_rss_after_search_bytes=end["peak_rss_after_search_bytes"], serialized_bytes=end["serialized_bytes"]
+        )
+        # 019 §4（008-v5）：子 process 最後 relief 之後的記憶體（M_relief），相對 baseline；只是診斷，
+        # 主要指標仍是 index_footprint_bytes（014、019 §6），hygiene 標記也不看它。
+        baseline, relieved = prelude["baseline"], end["after_relief"]
+        build.update(
+            after_relief=relieved,
+            index_footprint_relieved_bytes=relieved["phys_footprint_bytes"] - baseline["phys_footprint_bytes"],
+            index_memory_relieved_bytes=relieved["rss_bytes"] - baseline["rss_bytes"],
         )
     return build, {"prelude": prelude, "built": built, "end": end}
 

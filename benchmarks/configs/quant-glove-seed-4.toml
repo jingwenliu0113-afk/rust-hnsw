@@ -1,0 +1,15 @@
+# Advanced C（decision 019）：glove-100-angular n = 100,000、(M, efC) = (16, 200)、seed 4、原始順序。
+# 單一 build：implementations 的順序就是執行順序（019 §5 的手動輪換）。
+# 本檔內容必須與 decision 019 附錄逐字相同（child_timeout_s 只能依 019 §5 上調）。
+schema_version = 1
+dataset = "glove-100-angular"
+implementations = ["rust-hnsw-sq8", "rust-hnsw-fp32g"]
+ef_search = [64, 96, 128, 152, 192, 256, 304, 384, 512, 768]
+child_timeout_s = 4200
+
+[[sweep]]
+n = [100000]
+m = [16]
+ef_construction = [200]
+seeds = [4]
+shuffles = []
