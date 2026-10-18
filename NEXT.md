@@ -2,6 +2,18 @@
 
 ## 目前狀態（2026-10-19 台灣時間，Core 與 Advanced C 都已完成；Advanced 已封版）
 
+**正式公開（2026-10-19）**：https://github.com/jingwenliu0113-afk/rust-hnsw（Public，BSD-3-Clause；專案作者核准）。比照 Inspection Robot 的公開流程：
+
+| 公開檢查 | 結果 |
+|---|---|
+| Git 全歷史 | 442 個 blob、62 個 commit（另有 8 個從未 push 的本機 stash）：沒有 token、金鑰、密碼、私鑰、帶帳密的 URL、私有 IP、主機或遠端桌機的連線資訊；沒有資料集、權重或 benchmark 原始輸出（`results/`、`datasets/` 從未 commit）；最大的 blob 是 170 KB 的圖；沒有刪除或改名過的檔案。commit 作者 email 公開（專案作者同意，不改寫歷史；之後的 commit 改用 GitHub noreply） |
+| 授權 | 原創程式碼 BSD-3-Clause（`LICENSE`、`Cargo.toml`、`python/pyproject.toml` 一致；先前 `Cargo.toml` 的 MIT 從未公開）；repo 不含第三方程式碼或資料；資料集、模型與 baseline 在執行時下載，保留原授權（`THIRD_PARTY_NOTICES.md`）；依賴沒有 GPL / AGPL |
+| 呈現 | 英文 `README.md` 加繁中 `README.zh-TW.md`；`docs/results.md`（四份正式報告的關鍵表，附 SHA-256）、`docs/architecture.md`、`docs/reproduce.md`、`docs/figures/README.md`；兩份 README 的數字由 `tests/test_readme_claims.py` 對照 `docs/results.md` |
+| 研究結果 | 不變：Gate 條件 3 不成立；Advanced C 的 H1a 成立、H1b 無法判定、H1 整體無法判定、H2 成立；背景負載干擾、C1 容許差與 SQ8 的速度和記憶體取捨照實保留 |
+| 測試 / 重現 | 工作目錄 `./scripts/test.sh`：pytest 1188 passed、3 skipped；乾淨 clone：最小 Demo 安裝路徑與 `examples/quickstart.py` 成功，`./scripts/test.sh` 1131 passed、60 skipped（57 個是本機才有的報告核對） |
+| 未登入存取 | README、中文 README、LICENSE、docs、THIRD_PARTY_NOTICES、圖與 API 都回傳 200；匿名 `git clone` 成功；GitHub 辨識為 BSD-3-Clause |
+| GitHub metadata | 英文說明與 topics（rust、hnsw、ann、vector-search、benchmark、pyo3）；沒有打 tag |
+
 - **專案已完成 SPEC 的 Core 與一個 Advanced（C）**：
   - 使用者 2026-10-19 決定 C 做完就封版，Advanced 不再做其他實驗，也不做 Optional。
   - 之後若要再做實驗，必須另寫 decision，標明是在看到 C 的結果之後才提出，而且不得取代 019 的判定。

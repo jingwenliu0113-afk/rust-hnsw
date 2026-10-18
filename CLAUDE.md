@@ -15,6 +15,13 @@
 9. 除非 Gate 已明確通過，否則不得進 Advanced。
 10. 除非使用者明確要求，否則不得實作 Optional。
 
+## 公開與授權（2026-10-19）
+
+- GitHub remote `origin` 是 **Public**（專案作者 2026-10-19 核准），https://github.com/jingwenliu0113-afk/rust-hnsw。
+- **授權：BSD-3-Clause**（原創程式碼，`LICENSE`）；第三方內容保留原授權（`THIRD_PARTY_NOTICES.md`）。不得加入 GPL / AGPL 依賴，不得 commit 資料集、embedding 或模型權重。
+- 本 repo 的 commit email 是 GitHub noreply（repo-local git config）；不得改寫 Git 歷史、不得 force push。
+- Core 與 Advanced C 已封版：不得修改封存結果、Gate 或正式實驗；兩份 README 的數字必須與 `docs/results.md` 一致（`tests/test_readme_claims.py`）。
+
 ## 專案邊界
 
 - 不做完整向量資料庫。
