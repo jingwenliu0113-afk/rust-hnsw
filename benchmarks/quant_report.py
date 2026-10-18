@@ -1464,7 +1464,7 @@ def plots(report: dict, dataset: str, out_dir: Path) -> list[Path]:
         ax.set_ylabel("QPS (median over seeds)", fontsize=8, color="#52514e")
         _style_axes(ax)
         ax.legend(fontsize=7, frameon=False)
-        ax.set_title(f"{title}: recall–QPS, flagged points excluded", fontsize=9)
+        ax.set_title(f"{title}\nrecall–QPS, flagged points excluded", fontsize=9)
         written.append(_save(fig, out_dir / "recall_qps.png", plt))
     else:
         plt.close(fig)
@@ -1486,7 +1486,7 @@ def plots(report: dict, dataset: str, out_dir: Path) -> list[Path]:
         ax.set_ylabel("Recall@10 (median over seeds, min–max)", fontsize=8, color="#52514e")
         _style_axes(ax)
         ax.legend(fontsize=7, frameon=False)
-        ax.set_title(f"{title}: recall vs ef", fontsize=9)
+        ax.set_title(f"{title}\nrecall vs ef", fontsize=9)
         written.append(_save(fig, out_dir / "recall_vs_ef.png", plt))
     else:
         plt.close(fig)
@@ -1521,7 +1521,7 @@ def plots(report: dict, dataset: str, out_dir: Path) -> list[Path]:
             ax.set_ylabel(f"QPS at Recall@10 ≥ {key} (frontier reading)", fontsize=8, color="#52514e")
             _style_axes(ax)
             ax.legend(fontsize=7, frameon=False)
-            ax.set_title(f"{title}: quantization frontier @ {key}" + (" (diagnostic x)" if suffix else ""), fontsize=9)
+            ax.set_title(f"{title}\nquantization frontier @ {key}" + (" (diagnostic x)" if suffix else ""), fontsize=9)
             written.append(_save(fig, out_dir / f"quant_frontier_{key}{suffix}.png", plt))
 
     bars = [e for e in part["profiles"] if e["implementation"] in (F, S) and e["ef_search"] == part["e_star"] and e["per_query_us"]]
@@ -1541,7 +1541,7 @@ def plots(report: dict, dataset: str, out_dir: Path) -> list[Path]:
         ax.set_xlabel(f"time per query at e* = {part['e_star']} (µs; share × 1 / QPS)", fontsize=8, color="#52514e")
         _style_axes(ax)
         ax.legend(fontsize=7, frameon=False, ncols=6, loc="upper center", bbox_to_anchor=(0.5, -0.22))
-        ax.set_title(f"{title}: per-query time, F vs S (seed 1)", fontsize=9)
+        ax.set_title(f"{title}\nper-query time, F vs S (seed 1)", fontsize=9)
         written.append(_save(fig, out_dir / "profile_breakdown.png", plt))
     return written
 
