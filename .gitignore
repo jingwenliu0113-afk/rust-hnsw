@@ -12,3 +12,10 @@ __pycache__/
 # Claude Code 自動產生的本機檔案：formal run 期間 repo 內不得出現 untracked 檔案（decision 014 補記）。
 /.claude/settings.local.json
 /.claude/worktrees/
+# Claude Code 的個人本機記憶檔（不與他人共用）。/.claude/ 底下其他可共用的設定不在此忽略。
+/CLAUDE.local.md
+# 預防性條目（公開前加入）：本機的環境變數檔與金鑰檔不進版控。目前的 tracked 檔與 Git 歷史都沒有這類檔案。
+.env
+.env.*
+*.pem
+*.key
