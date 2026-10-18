@@ -322,6 +322,10 @@ def test_main_needs_all_ten_c_formal_runs_before_diagnosing_either_dataset(tmp_p
     # 019 §7：診斷在全部 10 份 C formal config 完成之後才執行。GloVe 的 5 份完整、文字還沒有跑時必須拒絕。
     from test_quant_report import Scenario, materialize
 
+    from benchmarks import report
+
+    # CLI 預設也會掃描 repo 的 results/runs（formal 的完整性檢查）；只掃描這個測試自己的 run，不受本機真實 run 的影響。
+    monkeypatch.setattr(report, "RUNS_ROOT", tmp_path / "runs")
     args = materialize(Scenario(), tmp_path)
     glove = [d for d in args["run_dirs"] if "glove" in d.name]
     out = tmp_path / "diag.json"

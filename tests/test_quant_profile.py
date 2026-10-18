@@ -174,10 +174,14 @@ def test_the_plan_samples_search_only_with_every_parameter_explicit(tmp_path):
     assert blocked.returncode == 1 and "exists" in blocked.stderr
 
 
-def test_plan_and_check_need_the_runs_of_all_ten_c_formal_configs(tmp_path, capsys):
+def test_plan_and_check_need_the_runs_of_all_ten_c_formal_configs(tmp_path, capsys, monkeypatch):
     # 019 §9 第 8 步：profiling 在全部 formal（與診斷）之後。GloVe 的 5 份完整、文字還沒有跑時，plan 與 check 都拒絕。
     from test_quant_report import Scenario, materialize
 
+    from benchmarks import report
+
+    # CLI 預設也會掃描 repo 的 results/runs；只掃描這個測試自己的 run，不受本機真實 run 的影響。
+    monkeypatch.setattr(report, "RUNS_ROOT", tmp_path / "runs")
     runs = [str(d) for d in materialize(Scenario(), tmp_path)["run_dirs"]]
     glove = [d for d in runs if "glove" in d]
     for command in ("plan", "check"):
