@@ -1319,8 +1319,8 @@
   | 2 | P | build 與 ef 64、96 為 `load` | — |
   | 3 | F | ef 96、128 為 `load` | — |
   | 4 | F | 子 process `background` | `ugrep`（持續 6 個區間） |
-  | 5 | F | 子 process `background`；ef 304–768 另有 `load` | 另一個專案的 `.venv/bin/python`（平均約 61% CPU） |
-  | 5 | S | ef 64–304 為 `load` | — |
+  | 5 | F | 子 process `background`；ef 304–768 另有 `load` | 一個不屬於本次 run 的 `.venv/bin/python`（平均約 61% CPU；紀錄沒有記下它屬於哪個專案） |
+  | 5 | S | ef 64、128–304 為 `load`（ef 96 沒有標記） | — |
 
   - 都是沒有取 lock 的其他工作。`machine_quiet` 只決定開始的時機，run 期間出現的負載由 runner 照實標記（§5）。
 

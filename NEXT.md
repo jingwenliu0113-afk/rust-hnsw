@@ -6,7 +6,9 @@
   - 使用者 2026-10-19 決定 C 做完就封版，Advanced 不再做其他實驗，也不做 Optional。
   - 之後若要再做實驗，必須另寫 decision，標明是在看到 C 的結果之後才提出，而且不得取代 019 的判定。
 - **C 的結果**（README「Advanced C」一節；019 的第三則補記；報告在 `results/reports/quant-glove/`、`quant-text/`）：
-  - H1 整體**無法判定**：H1a（文字）成立；H1b、H1c、H1d 因 GloVe 被 `background` 標記，乾淨配對不足，無法判定。
+  - H1 整體**無法判定**：H1a（文字）成立。
+    - H1b、H1c：GloVe 在 e* 只有 seeds 2、3 兩個乾淨配對（seeds 1、4、5 有 `background` 標記），少於 3 個。
+    - H1d：GloVe seed 1 的 S 在 e* 有 `background` 標記；這條規則只看 seed 1，與乾淨配對的數目無關。
   - H2 整體**成立**：SQ8 的 recall 損失來自排序，不是走訪。
   - 使用者 2026-10-19 決定照實報告，不補 seed。
 
@@ -335,12 +337,12 @@ Gate 依 015 的事先登記讀法，條件 3 不成立；使用者依 SPEC 特�
   使用者另外決定：採用 decision 019 的設計（SQ8、H1 / H2、5 個臂、Rust 5 seeds / FAISS 3 seeds）、記憶體主要指標維持 014 的 phys_footprint、
   C 做完就封版（不保留第三個名額）。019 草稿經獨立審查（17 個 findings 全部採用），2026-10-16 在分支 `prereg-quant` 上事先登記（`docs/decisions/019-advanced-c-vector-quantization.md`）。019 §9 全部完成（2026-10-19）。
 - **（已決定，2026-10-19 台灣時間）C 的 H1 乾淨配對不足**：
-  - 狀況：GloVe 在 e* 只有 2 個乾淨配對，H1b、H1c、H1d 都無法判定。
+  - 狀況：GloVe 在 e* 只有 2 個乾淨配對，所以 H1b、H1c 無法判定；H1d 則因 seed 1 的 S 在 e* 被標記而無法判定（補 seed 也不會改變）。
   - 使用者決定照實報告，不補 seed，C 收尾後封版（019 的第三則補記）。
-- **GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
-  是否在看過結果之後補跑 `glove-formal-8`（需另寫 decision，標明是看過結果之後、只因 hygiene 標記），由使用者決定；預設照實報告「只有含標記點的讀值」。
-- **Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。
-  文字的正式報告與 Gate profiling 完成後，一起交給使用者決定是否進 Advanced。
+- **（已結案，2026-10-19）GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
+  使用者 2026-10-19 指示不補跑任何正式實驗，所以照實報告「只有含標記點的讀值」，不補跑 `glove-formal-8`。
+- **（已決定）Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。
+  使用者 2026-10-16 依 SPEC 特例決定進入 Advanced C（不宣稱 Gate 通過），2026-10-19 C 完成並封版。
 
 ### B1.（已決定，decision 014）index memory 的量測定義：phys_footprint 為主、rss 為輔
 
