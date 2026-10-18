@@ -1294,6 +1294,77 @@
   - H1、H2 比的是 F 對 S，兩者的函式邊界相同，所以不受影響。
 - **變壓器**：smoke 時接的是 Apple 140W。依 §5，C 報告以第一份 C formal run 實際使用的變壓器為準。
 
+## 補記（2026-10-19，C 的 formal、診斷、profiling 與報告之後）：C 完成與封版
+
+### 1. formal（§9 第 7 步）
+
+- 10 份 config 以一個批次執行：`./scripts/formal_launcher.sh results/batches/quant-formal.log 86400 --powermode 2 --skip-idle <10 份 config>`。
+  - 批次在 `machine_quiet` 連續 3 次成立之後，於 heavy lock 下開始。
+  - 時段：2026-10-16 20:38 – 10-17 00:08 UTC。
+- **10 個 run 全部 complete**，沒有任何 run 被排除。共同條件：
+  - commit 2c4e520、git 乾淨、協定 008-v5、高效能模式；
+  - Apple 140W 變壓器（§5「第一份 C formal 實際使用的變壓器」），10 個 run 都相同；
+  - binding SHA-256 `a208618a…`，與 premise 相同。
+
+  | 資料集 | seed 1 | seed 2 | seed 3 | seed 4 | seed 5 |
+  | --- | --- | --- | --- | --- | --- |
+  | GloVe | `20261016T203802Z-formal` | `20261016T211434Z-formal` | `20261016T214152Z-formal` | `20261016T220514Z-formal` | `20261016T221833Z-formal` |
+  | 文字 | `20261016T223724Z-formal` | `20261016T230246Z-formal` | `20261016T232100Z-formal` | `20261016T234053Z-formal` | `20261016T235454Z-formal` |
+
+- **hygiene 標記**：文字的 5 個 run 沒有任何標記。GloVe 的標記如下：
+
+  | seed | 臂 | 標記 | 來源（runner 的背景取樣） |
+  | --- | --- | --- | --- |
+  | 1 | S | 子 process `background`；ef 512 另有 `load` | macOS 的 `duetexpertd`（持續 4 個區間） |
+  | 2 | P | build 與 ef 64、96 為 `load` | — |
+  | 3 | F | ef 96、128 為 `load` | — |
+  | 4 | F | 子 process `background` | `ugrep`（持續 6 個區間） |
+  | 5 | F | 子 process `background`；ef 304–768 另有 `load` | 另一個專案的 `.venv/bin/python`（平均約 61% CPU） |
+  | 5 | S | ef 64–304 為 `load` | — |
+
+  - 都是沒有取 lock 的其他工作。`machine_quiet` 只決定開始的時機，run 期間出現的負載由 runner 照實標記（§5）。
+
+### 2. 診斷、profiling 與報告（§9 第 8 步）
+
+- **`quant_diag`**：兩個資料集各一次，都在 `machine_quiet` 之後、heavy lock 下、`VECLIB_MAXIMUM_THREADS=1` 執行。
+  - 結果在 `results/quant/diag-glove.json`、`diag-text.json`。
+  - 綁定：兩個資料集 5 個 seed 的 F、S，ids 都與 formal 逐位元相同，沒有不符或缺少的 ef。
+  - FAISS：3 個 seed 的移植 graph 都與 Flat 相同，重建的 Q 在 e\* 的 ids 相符，codes 一致比例 1.0，codebook 相同。
+  - 天花板 c：GloVe 0.98048、文字 0.9935。c_FAISS 相同。
+  - 第一次執行時，我在 shell 傳參數的方式錯了：zsh 不會切開沒加引號的變數，10 個 run 目錄被當成一個路徑。
+    工具在讀取第一個 run 時就報錯，沒有寫出任何輸出；修正指令之後重跑。工具與輸入都沒有改。
+- **profiling**：計畫由 `quant_profile plan` 產生，與 §8 一致：R、F、S 在 e\*，S 另在 GloVe ef 384、文字 ef 64。
+  - 8 次取樣都在 `machine_quiet` 之後、heavy lock 下進行。
+  - 8 次都通過 `quant_profile check`：取樣時的 Recall@10 與 formal 的同一點完全相同。
+- **`quant_report`**：輸出在 `results/reports/quant-glove/`、`quant-text/`。判定表的結果：
+  - **H1**：
+    - 前提成立；H1a（文字）**成立**，5 個乾淨配對的 ρ_eval 在 [0.961, 1.092]。
+    - H1b（GloVe）**無法判定**：e\* 的乾淨配對只有 seeds 2、3 兩個，少於 3 個。
+    - H1c **無法判定**：理由同 H1b。
+    - H1d **無法判定**：GloVe seed 1 的 S 在 e\* 有 `background` 標記。
+    - 整體 → **無法判定**。
+  - **H2**：GloVe **成立**、文字**成立** → 整體 **成立**。兩個資料集的 5 個 seed 都有效，δ_F 全為 0。
+  - **quantization frontier**：
+    - S 對 F：GloVe 0.90 / 0.95 都是 `uncertain`；文字 0.90 `within_quantization`、0.95 `uncertain`。
+    - Q 對 P：GloVe 都是 `uncertain`；文字都是 `within_quantization`。
+  - **一致性檢查**：
+    - C1：GloVe 的 F − S **不一致**（seed 5 偏離 4,030,488 B，容許 2,097,152 B），其餘一致。
+    - C5 兩個資料集都**不一致**，原因已在本文件的第一則補記第 5 節事先寫明：inline 決策改變，不是 Gate 無法重現。
+    - C2、C3、C4、C7a、C7b、C8 都一致；C4 的 F ÷ R 為 GloVe 0.97、文字 0.99。
+    - C6 只描述：GloVe 0.82–0.85、文字 1.09–1.13。
+- **繪圖的修正**（888f3f7）：文字資料集的名稱讓單行標題超出圖寬，兩端被切掉，所以把圖的說明移到標題第二行。
+  - 只改繪圖；重新產生的 report.json 與 report.md 和修正前逐位元相同。
+
+### 3. 使用者的決定（2026-10-19）與封版
+
+- **決定**：H1 的「無法判定」是因為乾淨配對不足。依 §9 由使用者決定是否補 seed；使用者決定**照實報告，不補 seed**，C 收尾後封版。
+- **README**：照實寫明原因。被標記配對的數值（ρ_eval 1.15、1.26、1.29，都 > 1.05），以及 H1d 在標記下的 κ，
+  都只列為「看到結果之後的描述」，不當作判定，也不改變判定表的任何一列。
+- **封版**（§9、§13）：C 依「C 完成的定義」完成，Advanced 封版。
+  - C 用了 3 個假設名額中的 2 個；第 3 個名額不保留。
+  - 之後若要再做實驗，必須另寫 decision，標明是在看到 C 的結果之後才提出，而且不得取代本文件的判定。
+- **EXPERIMENT_RULES**：C 的報告不含 insertion order 的 variance（Core 已報告 (16, 200) 的 shuffles 101–105），已在 README 的限制中寫明（§11）。
+
 ## 附錄：formal config（逐字登記）
 
 在實作 commit 中加入 `benchmarks/configs/` 的檔案，內容必須與下列範本代入後完全相同；唯一的例外是依 §5 上調的 `child_timeout_s`。`benchmarks/quant_report.py` 的 `QUANT_CONFIGS` 恰好登記這 10 份，每個資料集 5 份。

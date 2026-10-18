@@ -1,6 +1,14 @@
 # NEXT
 
-## 目前狀態（2026-10-17 台灣時間，Advanced C：實作與審查完成，下一步是真實資料的 correctness smoke）
+## 目前狀態（2026-10-19 台灣時間，Core 與 Advanced C 都已完成；Advanced 已封版）
+
+- **專案已完成 SPEC 的 Core 與一個 Advanced（C）**：
+  - 使用者 2026-10-19 決定 C 做完就封版，Advanced 不再做其他實驗，也不做 Optional。
+  - 之後若要再做實驗，必須另寫 decision，標明是在看到 C 的結果之後才提出，而且不得取代 019 的判定。
+- **C 的結果**（README「Advanced C」一節；019 的第三則補記；報告在 `results/reports/quant-glove/`、`quant-text/`）：
+  - H1 整體**無法判定**：H1a（文字）成立；H1b、H1c、H1d 因 GloVe 被 `background` 標記，乾淨配對不足，無法判定。
+  - H2 整體**成立**：SQ8 的 recall 損失來自排序，不是走訪。
+  - 使用者 2026-10-19 決定照實報告，不補 seed。
 
 時間一律註明時區（台灣時間 = UTC+8）。
 
@@ -19,7 +27,13 @@
      - run：`20261016T195505Z-smoke`、`20261016T201035Z-smoke`，都是 complete、沒有標記。
      - F、R、P 與 Core 的 ids 逐位元相同；FAISS 的移植 graph 相同；timeout 不需要上調。
      - 看到 smoke 之後的觀察（不是結論）：GloVe 上 F 的搜尋比 R 慢約兩成，由 C4 量化。
-  7. **下一步：10 份 C formal**（「下一步」第 7 點的第 4 項）。
+  7. ✔ 10 份 C formal 全部 complete（2026-10-17 04:38–08:08 台灣時間，Apple 140W、高效能）。
+     - GloVe 的 seeds 1、4、5 有 `background` 標記，來源是沒有取 lock 的其他工作。
+  8. ✔ 收尾：
+     - `quant_diag`：兩個資料集都與 formal 綁定。
+     - profiling：8 次取樣都通過 check。
+     - `quant_report`、README 的 C 一節、019 的第三則補記都已完成。
+     - 使用者決定照實報告並封版。
 - **審查發現的已知事實（不改判定規則）**：加入 quant 模組之後，Core 的原始碼沒變，但 hnsw crate 的 codegen 變了。
   - `search_layer` 把 visited set 的 `HashMap::insert` inline 進來了。紀錄在 `results/quant/core-codegen.json`，由 `scripts/probe_core_codegen.py` 產生。
   - H1、H2 不受影響（F、S 在同一個 binary）。
@@ -292,7 +306,7 @@ Gate 依 015 的事先登記讀法，條件 3 不成立；使用者依 SPEC 特�
      已以文字 pilot 端到端驗證（無 lock，只驗證工具，不作證據）。
    - 待正式 run 的結果出來後，依相近的 Recall@10 為各實作選 ef，在 heavy lock 下取樣。
 
-7. **Advanced C（decision 019 §9 第 6–8 步）**：每一步都先通過 `machine_quiet`，再在 heavy lock 下進行；repo 必須乾淨，binding 必須晚於 HEAD。
+7. **（已完成，2026-10-19）Advanced C（decision 019 §9 第 6–8 步）**：以下是當時的執行手冊，留作紀錄。每一步都先通過 `machine_quiet`，再在 heavy lock 下進行；repo 必須乾淨，binding 必須晚於 HEAD。
    1. `./scripts/test.sh`，讓 binding 晚於 HEAD。確認已安裝 binding 的 SHA-256 等於 `results/quant/premise.json` 的值；
       不同時，先把舊的 premise 改名保留，再重跑 `.venv/bin/python -m benchmarks.quant_profile premise`（019 補記第 3 節）。
    2. **smoke**：
@@ -319,7 +333,10 @@ Gate 依 015 的事先登記讀法，條件 3 不成立；使用者依 SPEC 特�
 - （已決定）文字的電力模式（016：高效能）、電量規則（017：取消）、變壓器（018：70W 或 140W）、開始時不看電量。
 - **（已決定，2026-10-16 台灣時間）進入 Advanced C：vector quantization**，依 SPEC 特例（使用者的判斷，不是 015 的讀值）；不宣稱原本的 Gate 全部通過。
   使用者另外決定：採用 decision 019 的設計（SQ8、H1 / H2、5 個臂、Rust 5 seeds / FAISS 3 seeds）、記憶體主要指標維持 014 的 phys_footprint、
-  C 做完就封版（不保留第三個名額）。019 草稿經獨立審查（17 個 findings 全部採用），2026-10-16 在分支 `prereg-quant` 上事先登記（`docs/decisions/019-advanced-c-vector-quantization.md`）。019 §9 第 1–5 步已完成（2026-10-17）；接下來是真實資料的 correctness smoke → 10 份 formal → 診斷、profiling、quant_report（見「下一步」第 7 點）。
+  C 做完就封版（不保留第三個名額）。019 草稿經獨立審查（17 個 findings 全部採用），2026-10-16 在分支 `prereg-quant` 上事先登記（`docs/decisions/019-advanced-c-vector-quantization.md`）。019 §9 全部完成（2026-10-19）。
+- **（已決定，2026-10-19 台灣時間）C 的 H1 乾淨配對不足**：
+  - 狀況：GloVe 在 e* 只有 2 個乾淨配對，H1b、H1c、H1d 都無法判定。
+  - 使用者決定照實報告，不補 seed，C 收尾後封版（019 的第三則補記）。
 - **GloVe 1,183,514 這一格沒有主要讀值**：三個實作的 build 都被標記 `background`（其他專案的 python 沒有取 lock 就跑）。010 §3 不允許重跑 complete 的 run。
   是否在看過結果之後補跑 `glove-formal-8`（需另寫 decision，標明是看過結果之後、只因 hygiene 標記），由使用者決定；預設照實報告「只有含標記點的讀值」。
 - **Gate 的判讀**：GloVe 依 015 為 `within_quantization`（不成立），但同 ef、同 recall 的比較一致顯示 hnswlib 快 1.22–1.38 倍（看到結果之後的觀察）。

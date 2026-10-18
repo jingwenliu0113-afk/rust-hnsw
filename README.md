@@ -5,13 +5,16 @@
 
 ## 目前狀態
 
-- Core / Day 1 完成：cosine distance、exact brute-force（ground truth）、
-  Python binding skeleton、固定的 Python batch interface。
-- Core / Week 1 進行中：HNSW insert / search、save / load、Python binding 與 efSearch 介面、
-  hnswlib / FAISS adapters、benchmark runner（smoke 已驗證）已完成。
-- 資料集已登記：`glove-100-angular`（frozen ground truth n = 100k / 300k / 1,183,514）、
-  正式文字 workload `simplewiki-embeddinggemma2-100k`（decision 012；n = 10k / 30k / 100k）與文字 pilot。
-- **真實資料上的 correctness 已通過**（SPEC Core 3；smoke 模式，計時不作任何結論）：三個實作的 Recall@10 都隨 efSearch 單調上升，
+- **Core 完成**（2026-10-16）：
+  - HNSW insert / search、save / load、Python binding、hnswlib / FAISS adapters、benchmark runner、兩個資料集的正式 run 與報告、Gate profiling。
+  - 結果見下面三節。
+  - Gate 依事先登記的讀法（decision 015），條件 3「同 recall 下與 hnswlib 有差距」**不成立**。
+- **Advanced C：vector quantization 完成並封版**（2026-10-19）：
+  - 使用者依 SPEC 的特例決定進入，**不宣稱原本的 Gate 通過**。
+  - 假設、baseline、評測協定與停止條件都在任何量化結果之前事先登記（decision 019）。
+  - 結果見「Advanced C」一節。
+  - 使用者決定 C 做完就封版：Advanced 不再做其他實驗，也沒有做任何 Optional。
+- **真實資料上的 correctness**（SPEC Core 3；smoke 模式，計時不作任何結論）：三個實作的 Recall@10 都隨 efSearch 單調上升，
   沒有系統性惡化，也沒有結果不足 k。
 
   | 資料集 | n | M / efC | Recall@10（ef = 10 → 64 → 256；三者相近） |
@@ -22,7 +25,6 @@
   | 文字（768 維，正式資料集） | 100,000 | 16 / 200 | 約 0.77 → 0.97 → 0.996 |
 
   完整 GloVe 上，ann-benchmarks 自帶的 neighbors 與本專案以 exact search 產生的 ground truth 完全一致。
-- 正式 benchmark 進行中：正式格點已事先登記，12 份 formal config 全部 commit（decision 013）；閒置 load 量測為 `ok`。GloVe 的 8 份已完成並產生正式報告，文字 workload 的 4 份還要在 Mac heavy lock 下跑（見 `NEXT.md`）。Gate 的讀法在看任何結果之前登記（decision 015）。兩個資料集的正式結果與 Gate profiling 見下三節；是否進 Advanced 由使用者決定。
 
 ## 正式結果：glove-100-angular（標準 ANN 資料集）
 
@@ -124,17 +126,127 @@ heavy lock、formal 的電力與背景條件。12 次取樣都通過 `gate_profi
 - 看到取樣之後的描述（不是事先登記的判讀）：100 維時，rust-hnsw 約四成的時間花在以 `std::collections::HashMap`（SipHash）實作的 visited set，
   hnswlib 用陣列式的 visited list，這部分不在它的排行前段；768 維時距離計算占絕大部分，兩者的 visited set 開銷都變小，與文字資料上兩者 QPS 相近一致。
 
+## Advanced C：vector quantization（decision 019）
+
+**研究問題**：搜尋期間把向量從 FP32 換成 8-bit scalar quantization（SQ8），Recall、Latency 與 Memory 之間的取捨是什麼？
+兩個假設、5 個比較臂、判定規則與停止條件，都在任何量化結果之前事先登記（[019](docs/decisions/019-advanced-c-vector-quantization.md)，commit 4c5cbc2）。
+
+- **表示**：SQ8 用 per-dim min–max 編碼（與 FAISS 的 `QT_8bit` + `RS_minmax` 對齊），採非對稱距離：query 保持 FP32，資料是 u8 code。
+  - 先以 Core 建好 FP32 的圖，再轉換表示，所以 SQ8 與 FP32 走的是**同一張圖**。
+  - kernel 與 Core 一樣，是依序加總的純量 f32 迴圈，沒有手寫 SIMD。
+- **比較臂**：
+
+  | 代號 | 實作 | 意義 |
+  | --- | --- | --- |
+  | R | `rust-hnsw` | Core 本身（錨點，只跑 seed 1） |
+  | F | `rust-hnsw-fp32g` | FP32，走新的搜尋路徑（kernel 以 `#[inline(never)]` 拆出，供 profiler 歸屬） |
+  | S | `rust-hnsw-sq8` | SQ8，與 F 同一張圖、同一條搜尋路徑 |
+  | P | `faiss-hnsw` | FAISS FP32 |
+  | Q | `faiss-hnsw-sq8` | P 的圖移植進 `IndexHNSWSQ`（FAISS 的 SQ kernel 是 NEON SIMD，只作描述） |
+
+- **條件**：
+  - 資料與參數：兩個資料集各取 n = 100,000、(M, efC) = (16, 200)、原始順序；F、S 跑 seeds 1–5，P、Q 跑 seeds 1–3。
+  - 量測：協定 008-v5、高效能電力模式、Apple 140W、Mac heavy lock，開始前另外確認 CPU、GPU 與 RAM 都閒置。
+  - run：10 份 formal config 全部 complete（2026-10-16 20:38 – 10-17 00:08 UTC）；報告由 `benchmarks/quant_report.py` 產生。
+  - 正式 run 之前，真實資料的 correctness smoke 已確認：F、R、P 的 ids 與 Core 的正式結果逐位元相同。
+
+**判定表**（事先登記的規則；完整的表與每一列的數字在報告的 `report.md`）：
+
+| 列 | 判定 | 判定所用的數字 |
+| --- | --- | --- |
+| H1 前提：兩個 kernel 的加總都是依序的純量相依鏈（反組譯） | 成立 | FP32 累加 21 次、SQ8 69 次，各自只用一個累加暫存器 |
+| H1a 文字：ρ_eval（S ÷ F 每秒完成的距離評估數）在 [0.90, 1.10] | **成立** | 5 個乾淨配對，[0.961, 1.092] |
+| H1b GloVe：ρ_eval ≥ 1.05 | **無法判定** | 乾淨配對只有 2 個（規定至少 3 個）：1.29、1.55 |
+| H1c 維度對比 | 無法判定 | 同上 |
+| H1d profiler：kernel 每次評估時間的比值 κ | 無法判定 | GloVe seed 1 的 S 在 e\* 有 `background` 標記 |
+| **H1 整體** | **無法判定** | |
+| H2 GloVe：recall 損失來自排序，不是走訪 | **成立** | 5 個 seed：L_total ≈ 0.0138，L_trav ≤ 0.00011，門檻 ≈ 0.0044 |
+| H2 文字 | **成立** | 5 個 seed：L_total ≈ 0.0046，L_trav ≤ 0.0006，門檻 ≈ 0.0021 |
+| **H2 整體** | **成立** | |
+| quantization frontier，S 對 F（GloVe 0.90 / 0.95） | `uncertain` / `uncertain` | |
+| quantization frontier，S 對 F（文字 0.90 / 0.95） | `within_quantization` / `uncertain` | |
+| quantization frontier，Q 對 P（GloVe 0.90 / 0.95；文字 0.90 / 0.95） | `uncertain` / `uncertain`；`within_quantization` / `within_quantization` | |
+
+- **H1 無法判定的原因**：GloVe 的 seeds 1、4、5 在 e\* = 304 被標記為 `background`（seed 5 另有 `load`）。
+  - 來源是其他沒有取 lock 的工作：macOS 的 `duetexpertd`、`ugrep`、另一個專案的 python。
+  - 依事先登記的規則，complete 的 run 不得重跑。使用者 2026-10-19 決定照實報告，不補 seed。
+- **一致性檢查**：
+  - C2（FP32 重排）、C3（天花板）、C7a / C7b（與 Core 逐位元相同）、C8（FAISS 移植的 graph）都一致。
+  - C4（新路徑對 Core 路徑）一致：F ÷ R 的 QPS 為 GloVe 0.97、文字 0.99。
+  - C1（記憶體差對照理論值 3nd − 8d）：文字一致；GloVe 的 F − S **不一致**，因為 seed 5 偏離 3.8 MiB，超過 2 MiB 的容許值，其餘 seed 都在容許值內。
+  - C5（Gate 重現）兩個資料集都**不一致**，原因在 formal 之前就已登記：
+    - 加入量化模組之後，Core 的原始碼沒變，但編譯器把 visited set 的 `HashMap::insert` inline 進了 `search_layer`；
+    - 所以那部分時間改算在 traversal（019 補記第 5 節）。
+  - C6 只描述：C 中 R 的 QPS ÷ Core 正式 run，GloVe 0.82–0.85、文字 1.09–1.13。這同時包含時間漂移與機器碼差異，兩者無法分開。
+
+**frontier 讀值，Recall@10 ≥ 0.95**（跨 seed median，排除有 hygiene 標記的 build；M_014 = phys_footprint 增量，是主要記憶體指標）：
+
+| 資料集 | 實作 | ef | QPS | P50 (µs) | M_014 (MiB) |
+| --- | --- | --- | --- | --- | --- |
+| GloVe | F（FP32） | 304 | 1,877（3 builds） | 547 | 105.4 |
+| GloVe | S（SQ8） | 384 | 2,299（4 builds） | 434 | 76.1 |
+| GloVe | P（FAISS FP32） | 304 | 3,350（2 builds） | 312 | 58.1 |
+| GloVe | Q（FAISS SQ8） | 384 | 2,445（3 builds） | 423 | 69.8 |
+| GloVe | R（Core，錨點） | 304 | 1,923 | 532 | 104.2 |
+| 文字 | F | 48 | 2,277（5 builds） | 442 | 318.8 |
+| 文字 | S | 64 | 1,769（5 builds） | 569 | 99.0 |
+| 文字 | P | 48 | 6,234（3 builds） | 166 | 313.0 |
+| 文字 | Q | 48 | 5,605（3 builds） | 186 | 106.5 |
+| 文字 | R（錨點） | 48 | 2,292 | 440 | 318.6 |
+
+![GloVe 的 recall–QPS（Advanced C）](docs/figures/advanced-c/glove/recall_qps.png)
+![文字的 recall–QPS（Advanced C）](docs/figures/advanced-c/text/recall_qps.png)
+![GloVe 的 quantization frontier @ 0.95](docs/figures/advanced-c/glove/quant_frontier_0.95.png)
+![文字的 quantization frontier @ 0.95](docs/figures/advanced-c/text/quant_frontier_0.95.png)
+
+**profiling**（seed 1、e\*；分類規則在取樣之前固定；8 次取樣都通過 check，取樣時的 Recall@10 與正式 run 完全相同）：
+
+| 資料集 | 實作 | kernel | visited set | traversal | heap | 每次評估的 kernel 時間 |
+| --- | --- | --- | --- | --- | --- | --- |
+| GloVe | F | 29.4% | 43.0% | 20.1% | 7.2% | 29.4 ns |
+| GloVe | S | 29.2% | 39.2% | 22.4% | 8.9% | 23.2 ns |
+| 文字 | F | 86.7% | 6.1% | 5.8% | 0.9% | 371.6 ns |
+| 文字 | S | 85.6% | 6.6% | 6.3% | 1.0% | 374.1 ns |
+
+![GloVe 的每 query 時間分解，F 對 S](docs/figures/advanced-c/glove/profile_breakdown.png)
+![文字的每 query 時間分解，F 對 S](docs/figures/advanced-c/text/profile_breakdown.png)
+
+**看到結果之後的描述**（不是事先登記的判讀，也不改變上表的任何一列）：
+
+- **768 維（文字）**：SQ8 沒有讓每次距離評估變便宜：ρ_eval ≈ 1，κ = 1.01，與 H1 的相依鏈模型一致。
+  - 所以要達到相同 recall，S 需要較大的 ef，frontier 上反而比 F 慢（0.95 時 QPS 1,769 對 2,277）。
+  - 換來的是 index memory：M_014 從 318.8 MiB 降到 99.0 MiB。
+- **100 維（GloVe）**：
+  - 所有 seed 的 ρ_eval 都 > 1.05，包括被標記的配對（1.15、1.26、1.29）。
+  - seed 1 的 κ = 0.79，ν = 0.80：kernel 與 kernel 以外的工作都變快了。
+  - 但依登記的規則，這些都不能判為成立。
+- **recall 的代價**：在 e\*，SQ8 的 Recall@10 比 FP32 低約 0.014（GloVe）與 0.005（文字），幾乎全部來自最終排序（H2）。
+  - 天花板（以 SQ8 距離做 exact search 能達到的 Recall@10）：GloVe 0.980、文字 0.994。
+- **FAISS SQ8 在 GloVe 上的 M_014 反而比 FP32 大**：69.8 對 58.1 MiB。
+  - 原因是 allocator 保留的 page 約多 39–41 MiB；relief 之後的診斷值（M_relief）是 24.8 對 52.8 MiB，差值符合理論值。
+  - 文字上 Q 比 P 小約 206 MiB。
+
+**限制**：
+
+- 結論只適用於 Rust 的依序純量 kernel、搜尋期間的表示、n = 100,000、(16, 200)。
+- build time 與 peak RSS 不會下降：SQ8 先建 FP32 的圖再轉換。文字的 peak RSS 是 S 1,023 MiB 對 F 951 MiB。
+- C 沒有做 insertion order 的 variance（Core 已報告 (16, 200) 的 shuffles 101–105）。
+- C 中的 R 與 Core 正式 run 的原始碼相同、機器碼不同（inline 決策改變；`scripts/probe_core_codegen.py`）。
+- FAISS 的 Q 對 P 只作描述：FAISS 的 SQ kernel 是 NEON SIMD，不屬於 H1 的機制。
+
 ## 目錄
 
 ```text
 crates/hnsw/        Rust 實作（distance、exact search、HNSW、save / load）
 python/             PyO3 binding，Python module 名稱 `rust_hnsw`
-benchmarks/         統一 batch interface、adapters、Recall 指標、benchmark runner（run.py）、報告（report.py）
+benchmarks/         統一 batch interface、adapters、Recall 指標、benchmark runner（run.py）、報告（report.py）、
+                    Advanced C 的報告、診斷、profiling 與 smoke 核對（quant_report.py、quant_diag.py、quant_profile.py、quant_smoke.py）
 benchmarks/configs/ runner 的 TOML config（smoke、真實資料的 correctness、成本探測）
 benchmarks/manifests/ 資料集的 manifest（來源、checksum、切分、frozen ground truth）
 tests/              Python 測試（binding、adapters、第三方原生語意、interface、metrics）
 scripts/test.sh     一鍵跑全部 correctness 檢查
 scripts/profile.sh  以 macOS `sample` 對 build / search 取樣（decision 009）
+scripts/formal_launcher.sh 等機器閒置後在 heavy lock 下啟動 formal / smoke 批次
 docs/decisions/     decision logs
 tools/with-mac-lock 正式 benchmark 用的 Mac heavy lock
 examples/           API 的 Demo（synthetic 資料，數字不是研究結果）
