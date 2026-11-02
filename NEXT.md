@@ -1,5 +1,18 @@
 # NEXT
 
+## CI（2026-11-02 台灣時間；PR #1，合併前）
+
+- 新增 `.github/workflows/ci.yml`：在 GitHub 的 `macos-15` runner 上跑 rustfmt、`hnsw` crate 的 clippy（`-D warnings`）與 `cargo test`、
+  `maturin develop --release`、pytest；不跑任何 benchmark（decision 008、014 的條件）。macos-14 的映像檔 GitHub 在 2026-11-02 停用
+  （actions/runner-images issue 13518），所以用 macos-15。
+- 這個 PR 上 GitHub 沒有啟動新加的 workflow，所以在暫時分支 `ci-check/*`（push 的觸發條件加上 `ci-check/**`）上執行。
+- 第一次執行（run 41393208161）：rustfmt、clippy、cargo test、maturin 都通過；pytest 52 failed、14 errors，全部來自
+  `benchmarks/environment.py:526` 的 `int()`。runner（Apple M1 (Virtual)，`hw.nperflevels` 1）的 `sysctl -n hw.perflevel1.physicalcpu`
+  回傳 exit 0、輸出空白（診斷 run 41393911298；`pmset -g ac` 是 `No adapter attached.`，`sample` 存在）。
+- 修正只在 CI（58812f3）：讀不到數字時，pytest 這一步以 PATH 最前面的 `sysctl` 包裝讓這個查詢回答 0（沒有 E core）；測試、harness、
+  Rust 程式都不變。修正後 pytest 1131 passed、60 skipped（run 41394434604），與 2026-10-19 乾淨 clone 的數字相同。
+- runner 的 `@stable` 是 rustc 1.99.1；README 記載的實測版本是 1.99.0。
+
 ## 目前狀態（2026-10-19 台灣時間，Core 與 Advanced C 都已完成；Advanced 已封版）
 
 **正式公開（2026-10-19）**：https://github.com/jingwenliu0113-afk/rust-hnsw（Public，BSD-3-Clause；專案作者核准）。比照 Inspection Robot 的公開流程：

@@ -1,6 +1,6 @@
 # rust-hnsw
 
-[![CI](https://github.com/jingwenliu0113-afk/rust-hnsw/actions/workflows/ci.yml/badge.svg)](https://github.com/jingwenliu0113-afk/rust-hnsw/actions/workflows/ci.yml)
+[![CI](https://github.com/jingwenliu0113-afk/rust-hnsw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jingwenliu0113-afk/rust-hnsw/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 ![Rust edition 2024](https://img.shields.io/badge/rust-edition%202024-orange.svg)
 ![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)
