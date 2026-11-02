@@ -574,7 +574,7 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 | 兩份 README 與 `docs/results.md` 一致、彼此一致；公開文件的相對連結與錨點都存在，而且不含本機路徑或 email | `tests/test_readme_claims.py` | Python 29 |
 | **合計** | | **Rust 130、Python 711** |
 
-- pytest 實際收集的項目比定義數多（`parametrize`）。最後一次記錄的 `./scripts/test.sh`（NEXT.md 中 2026-10-19 的公開檢查）：工作目錄 pytest 1188 passed、3 skipped；乾淨的 clone 1131 passed、60 skipped，其中 57 個 skip 是需要本機報告的核對。`.venv-embed` 最後一次記錄的是 16 passed（019 第一則補記，commit dca22c9）。乾淨 checkout（沒有本機報告、沒有 `.venv-embed`）目前的數量，見 CI（頁首的 badge）最近一次的執行紀錄。
+- pytest 實際收集的項目比定義數多（`parametrize`）。最後一次記錄的 `./scripts/test.sh`（NEXT.md 中 2026-10-19 的公開檢查）：工作目錄 pytest 1188 passed、3 skipped；乾淨的 clone 1131 passed、60 skipped，其中 57 個 skip 是需要本機報告的核對。`.venv-embed` 最後一次記錄的是 16 passed（019 第一則補記，commit dca22c9）。乾淨 checkout（沒有本機報告、沒有 `.venv-embed`）目前的數量，見 CI 在 `main` 上最近一次的執行紀錄（頁首的 badge 顯示它）。
 - **會 skip 的情況**：
   - 主 `.venv` 沒有 torch 與 sentence-transformers：`test_embed_text.py` 的 3 個模型測試 skip；`.venv-embed` 的本機快取沒有該 model revision 時也會 skip。
   - 沒有 macOS 的 `sample`：`test_profile_driver.py` 的 2 個測試 skip。

@@ -807,7 +807,7 @@ the working tree of 2026-10-19):
   (the publication checks of 2026-10-19 in NEXT.md) had pytest 1188 passed and 3 skipped in the working tree, and 1131
   passed and 60 skipped in a clean clone, where 57 of the skips are checks against the local reports. The last recorded
   `.venv-embed` run (first addendum of 019, commit dca22c9) had 16 passed. For current clean-checkout counts (no local
-  reports, no `.venv-embed`), see the latest run of the CI workflow (badge at the top).
+  reports, no `.venv-embed`), see the latest run of the CI workflow on `main` (the badge at the top shows it).
 - **When tests skip**:
   - The main `.venv` has no torch or sentence-transformers: the 3 model tests in `test_embed_text.py` skip; in
     `.venv-embed` they also skip when the local cache does not hold the model revision.
