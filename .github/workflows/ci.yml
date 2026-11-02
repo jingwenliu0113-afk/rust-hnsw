@@ -64,15 +64,17 @@ jobs:
       - name: pytest
         run: |
           # benchmarks/environment.py 的 run metadata 以 `sysctl -n hw.perflevel1.physicalcpu` 記錄 E core 數。
-          # 虛擬機的 runner 可能只有一個 CPU performance level，沒有這個 key；只有這種情況、只在這一步，
-          # 以 PATH 最前面的包裝讓它回答 0（沒有 E core），其他 sysctl 照常執行。
-          if ! sysctl -n hw.perflevel1.physicalcpu >/dev/null 2>&1; then
+          # 虛擬機的 runner 可能只有一個 CPU performance level：這個 key 不存在，或存在但沒有值（GitHub 的 macos-15 runner
+          # 是後者：exit 0、輸出空白，int('') 會失敗）。只有讀不到數字時、只在這一步，以 PATH 最前面的包裝讓它回答 0
+          # （沒有 E core），其他 sysctl 照常執行。
+          v=$(sysctl -n hw.perflevel1.physicalcpu 2>/dev/null || true)
+          if ! printf '%s' "$v" | grep -Eq '^[0-9]+$'; then
             mkdir -p "$RUNNER_TEMP/ci-bin"
             printf '%s\n' '#!/bin/sh' \
               'if [ "$*" = "-n hw.perflevel1.physicalcpu" ]; then echo 0; exit 0; fi' \
               'exec /usr/sbin/sysctl "$@"' > "$RUNNER_TEMP/ci-bin/sysctl"
             chmod +x "$RUNNER_TEMP/ci-bin/sysctl"
             export PATH="$RUNNER_TEMP/ci-bin:$PATH"
-            echo "::notice::This runner has no hw.perflevel1; the tests see 0 efficiency cores."
+            echo "::notice::This runner reports no usable hw.perflevel1 (got '$v'); the tests see 0 efficiency cores."
           fi
           .venv/bin/python -m pytest
