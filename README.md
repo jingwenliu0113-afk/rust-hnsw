@@ -924,6 +924,13 @@ mkdir -p results/profiles
 - **Scale**: the main conclusions are at n = 100,000. Scaling exists only for (16, 200); the GloVe n = 1,183,514 grid
   point has **no main reading** (all three builds are flagged `background`), and rust-hnsw's main reading at 300k for
   0.95 is "not reached".
+- **The text queries are documents, not questions**: base passages and queries are both embedded in the model card's
+  document format `title: {article title} | text: {passage}`, so the text workload finds passages similar to a
+  held-out passage; it is not question-to-passage retrieval ([decision 011](docs/decisions/011-datasets.md) §3.4), and
+  its conclusions cover only that distribution (011). RAG retrieves passages for natural-language questions, an
+  asymmetric query / document workload that was outside Core (011). The text results are therefore not a measured
+  operating point for RAG: recall at a given ef, and with it the ef and QPS needed for a recall target, may differ
+  there, and measuring that would need a question workload.
 - **Gate**: condition 3 does not hold under 015; entering Advanced C was the owner's decision under the SPEC special
   case and does not mean the Gate passed.
 - **Profiling is only an observation**: "about 40% in the visited set at 100-d" is a sampling-profiler attribution,

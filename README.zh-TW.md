@@ -414,6 +414,7 @@ quantization frontier 的判讀沿用 015 的 QPS 範圍與 seed 範圍規則（
 - **單一機器、單執行緒**：所有正式量測都在一台 Apple M4 Pro（8P + 4E）、48 GB、macOS 27.0.1 上，build 與 search 都是單執行緒。
   runner 用到 macOS 專屬的介面（phys_footprint、`sample`、`pmset`、`otool` 等），沒有在其他平台執行過；formal 模式只接受 Apple 原廠 70W 或 140W 變壓器。
 - **規模**：主要結論在 n = 100,000。scaling 只有 (16, 200)；GloVe n = 1,183,514 那一格**沒有主要讀值**（三個 build 都被標記 `background`），300k 的 rust-hnsw 在 0.95 的主要讀值為「未達到」。
+- **文字的 query 是文件，不是問句**：base 與 query 都以 model card 建議的 document 格式 `title: {文章標題} | text: {passage}` 產生 embedding，所以文字 workload 是「以 held-out 文件查詢相近文件」，不是自然語言問句對文件的檢索（[decision 011](docs/decisions/011-datasets.md) §3.4），結論也只代表這個分布（011）。RAG 是以自然語言問句檢索 passage，屬於 query / document 不對稱的 workload，不在 Core 的範圍內（011）。所以文字結果不是 RAG 的實測操作點：同一個 ef 的 recall，以及達到某個 recall 目標所需的 ef 與 QPS，在那裡都可能不同，要另一組問句 workload 才能量。
 - **Gate**：條件 3 依 015 不成立；進入 Advanced C 是專案作者依 SPEC 特例的決定，不代表 Gate 通過。
 - **profiling 只是觀察**：「100 維時 visited set 約占四成」來自取樣 profiler 的歸屬，沒有以介入實驗驗證。rust-hnsw 的距離計算被 inline，無法單獨拆出；FAISS 沒有符號表，只能近似。
 - **Advanced C**：H1 整體無法判定；GloVe 的 seeds 1、4、5 被背景負載標記；C1 在 GloVe 的 F − S 不一致（seed 5）；結論的適用範圍見上一節。
