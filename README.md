@@ -795,7 +795,7 @@ the working tree of 2026-10-19):
   - No local `results/reports/` (a clean clone): the tests in `test_results_doc.py` that need the reports skip and say
     why. `test_readme_claims.py` needs no local reports and also runs in a clean clone.
 - **Platform and CI**: macOS arm64 only. Locally the tests ran on the Apple M4 Pro;
-  [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs them on GitHub's `macos-14` runner for every push to
+  [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs them on GitHub's `macos-15` runner for every push to
   `main` and every pull request: rustfmt for the workspace, clippy (`-D warnings`) and `cargo test` for the `hnsw`
   crate, then `maturin develop --release` and pytest from a clean checkout (so the clean-clone skips above apply),
   without the `.venv-embed` model tests. CI runs no benchmark: the formal measurements need the conditions of
@@ -954,7 +954,7 @@ benchmarks/manifests/      Dataset manifests (source, checksums, splits, frozen 
 tests/                     Python tests (binding, adapters, third-party native semantics, interface, metrics, runner, reports, profiling, data preparation,
                            Advanced C, golden test, demo, checks of results.md and of both READMEs)
 scripts/test.sh            Runs every correctness check
-.github/workflows/ci.yml   CI on GitHub's macos-14 runner: rustfmt, clippy, cargo test, maturin develop, pytest; no benchmarks
+.github/workflows/ci.yml   CI on GitHub's macos-15 runner: rustfmt, clippy, cargo test, maturin develop, pytest; no benchmarks
 scripts/profile.sh         Samples build / search with macOS `sample` (decision 009)
 scripts/formal_launcher.sh Starts a formal / smoke batch under the heavy lock once the machine is idle
 scripts/formal_batch.sh    Runs a batch in order within one lock holding; stops at the first failed run

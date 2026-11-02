@@ -18,8 +18,8 @@ concurrency:
 
 jobs:
   test:
-    name: Rust and Python tests (macos-14)
-    runs-on: macos-14
+    name: Rust and Python tests (macos-15)
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       CARGO_TERM_COLOR: always
