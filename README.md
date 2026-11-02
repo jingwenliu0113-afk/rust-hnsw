@@ -803,9 +803,11 @@ the working tree of 2026-10-19):
 | Both READMEs agree with `docs/results.md` and with each other; in the public documents, relative links and anchors resolve and there are no local paths or e-mail addresses | `tests/test_readme_claims.py` | Python 29 |
 | **Total** | | **Rust 130, Python 711** |
 
-- pytest collects more items than there are definitions (`parametrize`). The last recorded `./scripts/test.sh` (first
-  addendum of 019, commit dca22c9) had pytest 1024 passed and 3 skipped, plus 16 passed in `.venv-embed`; tests have
-  been added and adjusted since then, so the counts differ.
+- pytest collects more items than there are definitions (`parametrize`). The last recorded `./scripts/test.sh` runs
+  (the publication checks of 2026-10-19 in NEXT.md) had pytest 1188 passed and 3 skipped in the working tree, and 1131
+  passed and 60 skipped in a clean clone, where 57 of the skips are checks against the local reports. The last recorded
+  `.venv-embed` run (first addendum of 019, commit dca22c9) had 16 passed. For current clean-checkout counts (no local
+  reports, no `.venv-embed`), see the latest run of the CI workflow (badge at the top).
 - **When tests skip**:
   - The main `.venv` has no torch or sentence-transformers: the 3 model tests in `test_embed_text.py` skip; in
     `.venv-embed` they also skip when the local cache does not hold the model revision.

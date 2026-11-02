@@ -81,8 +81,9 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 - 依序執行：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test`（只跑零相依的 hnsw crate）、
   `maturin develop --release --uv -m python/Cargo.toml`、pytest；有 `.venv-embed` 時，另以 `HF_HUB_OFFLINE=1` 跑 EmbeddingGemma 2 的模型測試。
 - 這是 correctness 檢查，不需要 heavy lock（[MACHINE_POLICY.md](../MACHINE_POLICY.md)）。
-- 最後一次記錄的結果（019 第一則補記，commit dca22c9）：rustfmt、clippy、cargo test 都通過；pytest 1024 passed、3 skipped；`.venv-embed` 16 passed。
-  之後的 commit 也調整過測試，數量可能不同。
+- 最後一次記錄的結果（NEXT.md 中 2026-10-19 的公開檢查）：工作目錄 pytest 1188 passed、3 skipped；乾淨的 clone 1131 passed、60 skipped（57 個是需要本機報告的核對）。
+  `.venv-embed` 最後一次記錄的是 16 passed（019 第一則補記，commit dca22c9；當時 rustfmt、clippy、cargo test 也都通過）。
+  乾淨 checkout（沒有本機報告、沒有 `.venv-embed`）目前的數量，見 GitHub Actions 的 CI（`.github/workflows/ci.yml`）最近一次的執行紀錄。
 - 會 skip 的情況：主 `.venv` 沒有 torch 與 sentence-transformers，模型測試會 skip；沒有 macOS 的 `sample` 時，profiling driver 的測試會 skip；
   設定了 `OMP_NUM_THREADS` 時，兩個第三方語意測試會 skip；`.venv-embed` 的模型測試在本機快取沒有該 model revision 時會 skip。
 - 新版 toolchain 可能加入新的 clippy lint，讓 `-D warnings` 失敗。要用實測的版本：
