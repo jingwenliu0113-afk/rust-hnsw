@@ -177,6 +177,10 @@ frontier 取點不內插、有 hygiene 標記的點不進入主要讀值。
 | 0.99 | hnswlib | 1,363（32 / 200 / 384） | 797（32 / 200 / 384） | 1,064（32 / 200 / 384） | 80.3（32 / 200） |
 | 0.99 | faiss-hnsw | 1,654（32 / 200 / 384） | 561（32 / 200 / 384） | 701（32 / 200 / 384） | 69.6（32 / 200） |
 
+- **rust-hnsw 在 GloVe n = 100,000 的 Core index memory 讀值異常，不能拿來下記憶體的結論**：包括 rust-hnsw 在本表 index memory 欄與上方 frontier 圖記憶體子圖中的值、下方「build time 與記憶體」的 104.9 MiB 與 scaling 圖 100k 處的值，以及包含被標記點的 94.0 MiB（見下方限制）：
+  - (M, efC) = (16, 200) 時，rust-hnsw 在 n = 100,000 的 index memory 是 104.9 MiB，hnswlib 是 68.1 MiB（各 5 個 build 的 median）；到了 n = 300,000，rust-hnsw 的 186.3 MiB 反而低於 hnswlib 的 190.0 MiB（各一個 build；[`docs/results.md`](docs/results.md) §3.8）；
+  - Advanced C 的錨點 R（rust-hnsw、seed 1、(16, 200)）的 M_014 是 104.2 MiB，但子 process 呼叫 `malloc_zone_pressure_relief` 之後的診斷值 M_relief 只有 64.8 MiB（§6.10）。
+  - 看到結果之後提出、記錄為未驗證的解釋（NEXT.md、decision 019）：100 維時，`add` 期間的正規化暫時副本（[decision 014](docs/decisions/014-formal-run-conditions-and-index-memory.md) 的 B1）留在 phys_footprint 內。這段註記不改任何讀值：M_014 仍是主要記憶體指標（decision 014、019）。
 - **QPS 比值**（frontier 讀值）：hnswlib ÷ rust-hnsw = 1.32 / 1.24 / 1.35，faiss-hnsw ÷ rust-hnsw = 2.02 / 2.23 / 1.64（0.90 / 0.95 / 0.99）。
   解讀 FAISS 的倍數時，請一併看[公平性與方法](#公平性與方法)的 SIMD 與編譯旗標：FAISS 是 NEON wheel，rust-hnsw 是純量迴圈。
 - **Gate 的判讀（decision 015，事先登記）**：主要目標 0.95 為 `within_quantization`，即「在 ef 梯子的量化範圍內，無法區分」——rust-hnsw 的 QPS 範圍 [2,537, 3,234]、
@@ -239,6 +243,8 @@ frontier 取點不內插、有 hygiene 標記的點不進入主要讀值。
   - rust-hnsw 的 peak RSS 多出約一份資料，是 `add` 期間的正規化暫時副本（[decision 014](docs/decisions/014-formal-run-conditions-and-index-memory.md) 的 B1）。
 
 ![文字的 scaling](docs/figures/simplewiki-embeddinggemma2-100k/scaling.png)
+
+*scaling 圖的 index memory：rust-hnsw 在 n = 10,000 的讀值異常，不用於任何結論。它是 62.1 MiB，hnswlib 是 32.4 MiB、faiss-hnsw 是 31.3 MiB；30k 與 100k 時三者分別是 97.5 / 101.0 / 94.9 與 318.8 / 323.3 / 312.5 MiB（rust-hnsw / hnswlib / faiss-hnsw；[`docs/results.md`](docs/results.md) §4.8；10k 每個實作只有一個 build）。這個讀值沒有經過驗證的解釋。*
 
 **兩個資料集合起來（依 decision 015）**：兩個資料集的主要目標都不是 `gap`（有差距），所以 SPEC Gate 的「同 recall 下與 hnswlib 有差距」**不成立**；
 「無法區分」不等於「很接近 hnswlib」，是否適用 SPEC 的特例（Advanced 改聚焦 vector quantization）由專案作者判斷（見 [Gate 四條件總表](#gate-四條件總表)）。

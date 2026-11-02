@@ -164,6 +164,19 @@ transcription of the key tables are in [`docs/results.md`](docs/results.md) §1 
 | 0.99 | hnswlib | 1,363 (32 / 200 / 384) | 797 (32 / 200 / 384) | 1,064 (32 / 200 / 384) | 80.3 (32 / 200) |
 | 0.99 | faiss-hnsw | 1,654 (32 / 200 / 384) | 561 (32 / 200 / 384) | 701 (32 / 200 / 384) | 69.6 (32 / 200) |
 
+- **rust-hnsw's Core index-memory readings on GloVe at n = 100,000 are anomalous; do not draw memory conclusions from
+  them.** This covers rust-hnsw's values in the index memory column of this table and in the memory panel of the
+  frontier figure above, the 104.9 MiB under "Build time and memory" and the 100k point of the scaling figure below,
+  and the 94.0 MiB reading that includes flagged points (limitations below):
+  - at (M, efC) = (16, 200), rust-hnsw's index memory at n = 100,000 is 104.9 MiB against hnswlib's 68.1 MiB (medians
+    of 5 builds), but at n = 300,000 it is 186.3 MiB, below hnswlib's 190.0 MiB (one build each;
+    [`docs/results.md`](docs/results.md) §3.8);
+  - in Advanced C, the anchor R (rust-hnsw, seed 1, (16, 200)) reads 104.2 MiB as M_014 but 64.8 MiB as the
+    diagnostic M_relief, taken after the child calls `malloc_zone_pressure_relief` (§6.10).
+  - A post-hoc explanation, recorded as unverified (NEXT.md; decision 019): at 100 dimensions, the temporary
+    normalized copy made during `add` (B1 in
+    [decision 014](docs/decisions/014-formal-run-conditions-and-index-memory.md)) stays in phys_footprint. This note
+    changes no reading: M_014 stays the primary memory metric (decisions 014, 019).
 - **QPS ratios** (frontier readings): hnswlib ÷ rust-hnsw = 1.32 / 1.24 / 1.35, faiss-hnsw ÷ rust-hnsw =
   2.02 / 2.23 / 1.64 (0.90 / 0.95 / 0.99).
   When reading FAISS's factor, also read the SIMD and compiler-flag facts in
@@ -259,6 +272,12 @@ transcription in [`docs/results.md`](docs/results.md) §4.
     in [decision 014](docs/decisions/014-formal-run-conditions-and-index-memory.md)).
 
 ![Text scaling](docs/figures/simplewiki-embeddinggemma2-100k/scaling.png)
+
+*Index memory in the scaling figure: rust-hnsw's reading at n = 10,000 is anomalous and is not used for any
+conclusion. It is 62.1 MiB, against 32.4 MiB for hnswlib and 31.3 MiB for faiss-hnsw, while at 30k and 100k the three
+read 97.5 / 101.0 / 94.9 and 318.8 / 323.3 / 312.5 MiB (rust-hnsw / hnswlib / faiss-hnsw;
+[`docs/results.md`](docs/results.md) §4.8; one build per implementation at 10k). No explanation for it has been
+verified.*
 
 ### Both datasets together (decision 015)
 
