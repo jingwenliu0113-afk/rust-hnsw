@@ -1,5 +1,6 @@
 # rust-hnsw
 
+[![CI](https://github.com/jingwenliu0113-afk/rust-hnsw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jingwenliu0113-afk/rust-hnsw/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 ![Rust edition 2024](https://img.shields.io/badge/rust-edition%202024-orange.svg)
 ![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)
@@ -793,8 +794,13 @@ the working tree of 2026-10-19):
   - `OMP_NUM_THREADS` is set: 2 tests in `test_third_party_semantics.py` skip.
   - No local `results/reports/` (a clean clone): the tests in `test_results_doc.py` that need the reports skip and say
     why. `test_readme_claims.py` needs no local reports and also runs in a clean clone.
-- **Platform**: run only on macOS arm64 (Apple M4 Pro); no CI is configured. Run times were not formally recorded
-  (019 §12 estimates 2–3 runs of `./scripts/test.sh` at 0.3 h centrally and 0.5 h pessimistically).
+- **Platform and CI**: macOS arm64 only. Locally the tests ran on the Apple M4 Pro;
+  [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs them on GitHub's `macos-15` runner for every push to
+  `main` and every pull request: rustfmt for the workspace, clippy (`-D warnings`) and `cargo test` for the `hnsw`
+  crate, then `maturin develop --release` and pytest from a clean checkout (so the clean-clone skips above apply),
+  without the `.venv-embed` model tests. CI runs no benchmark: the formal measurements need the conditions of
+  decisions 008 and 014. Run times were not formally recorded (019 §12 estimates 2–3 runs of `./scripts/test.sh` at
+  0.3 h centrally and 0.5 h pessimistically).
 - A newer toolchain may add clippy lints that make `-D warnings` fail; to use the tested version, run
   `RUSTUP_TOOLCHAIN=1.99.0 ./scripts/test.sh` ([`docs/reproduce.md`](docs/reproduce.md) §A).
 
@@ -948,6 +954,7 @@ benchmarks/manifests/      Dataset manifests (source, checksums, splits, frozen 
 tests/                     Python tests (binding, adapters, third-party native semantics, interface, metrics, runner, reports, profiling, data preparation,
                            Advanced C, golden test, demo, checks of results.md and of both READMEs)
 scripts/test.sh            Runs every correctness check
+.github/workflows/ci.yml   CI on GitHub's macos-15 runner: rustfmt, clippy, cargo test, maturin develop, pytest; no benchmarks
 scripts/profile.sh         Samples build / search with macOS `sample` (decision 009)
 scripts/formal_launcher.sh Starts a formal / smoke batch under the heavy lock once the machine is idle
 scripts/formal_batch.sh    Runs a batch in order within one lock holding; stops at the first failed run

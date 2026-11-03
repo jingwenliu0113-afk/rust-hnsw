@@ -1,5 +1,6 @@
 # rust-hnsw
 
+[![CI](https://github.com/jingwenliu0113-afk/rust-hnsw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jingwenliu0113-afk/rust-hnsw/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 ![Rust edition 2024](https://img.shields.io/badge/rust-edition%202024-orange.svg)
 ![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)
@@ -572,7 +573,7 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
   - 沒有 macOS 的 `sample`：`test_profile_driver.py` 的 2 個測試 skip。
   - 設定了 `OMP_NUM_THREADS`：`test_third_party_semantics.py` 的 2 個測試 skip。
   - 沒有本機的 `results/reports/`（乾淨的 clone）：`test_results_doc.py` 中需要報告的測試 skip，並說明原因。`test_readme_claims.py` 不需要本機報告，乾淨的 clone 也會執行。
-- **平台**：只在 macOS arm64（Apple M4 Pro）上執行過；沒有設定 CI。執行時間沒有正式記錄（019 §12 把 2–3 次 `./scripts/test.sh` 估為中央 0.3 h、悲觀 0.5 h）。
+- **平台與 CI**：只在 macOS arm64 上執行。本機測試在 Apple M4 Pro 上執行；[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 在每次 push 到 `main` 與每個 pull request 時，於 GitHub 的 `macos-15` runner 上執行：整個 workspace 的 rustfmt、`hnsw` crate 的 clippy（`-D warnings`）與 `cargo test`，再以乾淨的 checkout 跑 `maturin develop --release` 與 pytest（所以上面乾淨 clone 的 skip 都適用），不跑 `.venv-embed` 的模型測試。CI 不跑任何 benchmark：正式量測需要 decision 008、014 的條件。執行時間沒有正式記錄（019 §12 把 2–3 次 `./scripts/test.sh` 估為中央 0.3 h、悲觀 0.5 h）。
 - 新版 toolchain 可能加入新的 clippy lint，讓 `-D warnings` 失敗；要用實測的版本，以 `RUSTUP_TOOLCHAIN=1.99.0 ./scripts/test.sh` 執行（[`docs/reproduce.md`](docs/reproduce.md) §A）。
 
 ## Benchmark runner（decision 008）
@@ -687,6 +688,7 @@ benchmarks/manifests/      資料集的 manifest（來源、checksum、切分、
 tests/                     Python 測試（binding、adapters、第三方原生語意、interface、metrics、runner、報告、profiling、資料準備、
                            Advanced C、golden test、Demo、results.md 與兩份 README 的核對）
 scripts/test.sh            一鍵跑全部 correctness 檢查
+.github/workflows/ci.yml   GitHub 的 macos-15 runner 上的 CI：rustfmt、clippy、cargo test、maturin develop、pytest；不跑 benchmark
 scripts/profile.sh         以 macOS `sample` 對 build / search 取樣（decision 009）
 scripts/formal_launcher.sh 等機器閒置後在 heavy lock 下啟動 formal / smoke 批次
 scripts/formal_batch.sh    在同一次 lock 持有中依序執行批次，任一 run 失敗就停

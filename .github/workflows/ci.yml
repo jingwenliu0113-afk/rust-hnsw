@@ -1,0 +1,80 @@
+# correctness 檢查：scripts/test.sh 的步驟，但 clippy 只檢查 hnsw crate（scripts/test.sh 用 --workspace），也不跑 .venv-embed 的模型測試。
+# cargo test 與 scripts/test.sh 相同：workspace 的 default-members 只有 crates/hnsw。
+# 不跑任何 benchmark：正式量測需要 decision 008、014 的條件（heavy lock、AC 電源與原廠變壓器等），CI 不執行。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Rust and Python tests (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      # 要完整的 Git 歷史：tests/test_report.py 與 tests/test_gate_profile.py 以 git diff 比對寫死的歷史 commit，
+      # 預設的 fetch-depth 1 只取最後一個 commit，這 3 個測試會失敗（cannot compare commits）。
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy (hnsw crate)
+        run: cargo clippy -p hnsw --all-targets -- -D warnings
+
+      - name: cargo test (hnsw crate)
+        run: cargo test -p hnsw
+
+      - uses: astral-sh/setup-uv@v10.2.0
+
+      # 與 scripts/test.sh 的前置相同：.venv 在 repo 根目錄（scripts/profile.sh 也用 .venv/bin/python）。
+      - name: Create .venv from requirements-dev.txt
+        run: |
+          uv venv --python 3.13 .venv
+          uv pip install --python .venv/bin/python -r requirements-dev.txt
+
+      - name: Build the Python binding (maturin develop --release)
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv
+          PYO3_PYTHON: ${{ github.workspace }}/.venv/bin/python
+        run: .venv/bin/maturin develop --release --uv -m python/Cargo.toml
+
+      # 乾淨的 checkout 沒有 results/reports/：test_results_doc.py 中需要本機報告的測試會 skip；
+      # .venv 沒有 torch：test_embed_text.py 的模型測試也會 skip（都是既有的 skip 邏輯）。
+      - name: pytest
+        run: |
+          # benchmarks/environment.py 的 run metadata 以 `sysctl -n hw.perflevel1.physicalcpu` 記錄 E core 數。
+          # 虛擬機的 runner 可能只有一個 CPU performance level：這個 key 不存在，或存在但沒有值（GitHub 的 macos-15 runner
+          # 是後者：exit 0、輸出空白，int('') 會失敗）。只有讀不到數字時、只在這一步，以 PATH 最前面的包裝讓它回答 0
+          # （沒有 E core），其他 sysctl 照常執行。
+          v=$(sysctl -n hw.perflevel1.physicalcpu 2>/dev/null || true)
+          if ! printf '%s' "$v" | grep -Eq '^[0-9]+$'; then
+            mkdir -p "$RUNNER_TEMP/ci-bin"
+            printf '%s\n' '#!/bin/sh' \
+              'if [ "$*" = "-n hw.perflevel1.physicalcpu" ]; then echo 0; exit 0; fi' \
+              'exec /usr/sbin/sysctl "$@"' > "$RUNNER_TEMP/ci-bin/sysctl"
+            chmod +x "$RUNNER_TEMP/ci-bin/sysctl"
+            export PATH="$RUNNER_TEMP/ci-bin:$PATH"
+            echo "::notice::This runner reports no usable hw.perflevel1 (got '$v'); the tests see 0 efficiency cores."
+          fi
+          .venv/bin/python -m pytest
