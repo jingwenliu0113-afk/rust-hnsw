@@ -177,6 +177,10 @@ frontier 取點不內插、有 hygiene 標記的點不進入主要讀值。
 | 0.99 | hnswlib | 1,363（32 / 200 / 384） | 797（32 / 200 / 384） | 1,064（32 / 200 / 384） | 80.3（32 / 200） |
 | 0.99 | faiss-hnsw | 1,654（32 / 200 / 384） | 561（32 / 200 / 384） | 701（32 / 200 / 384） | 69.6（32 / 200） |
 
+- **rust-hnsw 在 GloVe n = 100,000 的 Core index memory 讀值異常，不能拿來下記憶體的結論**：包括 rust-hnsw 在本表 index memory 欄與上方 frontier 圖記憶體子圖中的值、下方「build time 與記憶體」的 104.9 MiB 與 scaling 圖 100k 處的值，以及包含被標記點的 94.0 MiB（見下方限制）：
+  - (M, efC) = (16, 200) 時，rust-hnsw 在 n = 100,000 的 index memory 是 104.9 MiB，hnswlib 是 68.1 MiB（各 5 個 build 的 median）；到了 n = 300,000，rust-hnsw 的 186.3 MiB 反而低於 hnswlib 的 190.0 MiB（各一個 build；[`docs/results.md`](docs/results.md) §3.8）；
+  - Advanced C 的錨點 R（rust-hnsw、seed 1、(16, 200)）的 M_014 是 104.2 MiB，但子 process 呼叫 `malloc_zone_pressure_relief` 之後的診斷值 M_relief 只有 64.8 MiB（§6.10）。
+  - 看到結果之後提出、記錄為未驗證的解釋（NEXT.md、decision 019）：100 維時，`add` 期間的正規化暫時副本（[decision 014](docs/decisions/014-formal-run-conditions-and-index-memory.md) 的 B1）留在 phys_footprint 內。這段註記不改任何讀值：M_014 仍是主要記憶體指標（decision 014、019）。
 - **QPS 比值**（frontier 讀值）：hnswlib ÷ rust-hnsw = 1.32 / 1.24 / 1.35，faiss-hnsw ÷ rust-hnsw = 2.02 / 2.23 / 1.64（0.90 / 0.95 / 0.99）。
   解讀 FAISS 的倍數時，請一併看[公平性與方法](#公平性與方法)的 SIMD 與編譯旗標：FAISS 是 NEON wheel，rust-hnsw 是純量迴圈。
 - **Gate 的判讀（decision 015，事先登記）**：主要目標 0.95 為 `within_quantization`，即「在 ef 梯子的量化範圍內，無法區分」——rust-hnsw 的 QPS 範圍 [2,537, 3,234]、
@@ -239,6 +243,8 @@ frontier 取點不內插、有 hygiene 標記的點不進入主要讀值。
   - rust-hnsw 的 peak RSS 多出約一份資料，是 `add` 期間的正規化暫時副本（[decision 014](docs/decisions/014-formal-run-conditions-and-index-memory.md) 的 B1）。
 
 ![文字的 scaling](docs/figures/simplewiki-embeddinggemma2-100k/scaling.png)
+
+*scaling 圖的 index memory：rust-hnsw 在 n = 10,000 的讀值異常，不用於任何結論。它是 62.1 MiB，hnswlib 是 32.4 MiB、faiss-hnsw 是 31.3 MiB；30k 與 100k 時三者分別是 97.5 / 101.0 / 94.9 與 318.8 / 323.3 / 312.5 MiB（rust-hnsw / hnswlib / faiss-hnsw；[`docs/results.md`](docs/results.md) §4.8；10k 每個實作只有一個 build）。這個讀值沒有經過驗證的解釋。*
 
 **兩個資料集合起來（依 decision 015）**：兩個資料集的主要目標都不是 `gap`（有差距），所以 SPEC Gate 的「同 recall 下與 hnswlib 有差距」**不成立**；
 「無法區分」不等於「很接近 hnswlib」，是否適用 SPEC 的特例（Advanced 改聚焦 vector quantization）由專案作者判斷（見 [Gate 四條件總表](#gate-四條件總表)）。
@@ -408,6 +414,7 @@ quantization frontier 的判讀沿用 015 的 QPS 範圍與 seed 範圍規則（
 - **單一機器、單執行緒**：所有正式量測都在一台 Apple M4 Pro（8P + 4E）、48 GB、macOS 27.0.1 上，build 與 search 都是單執行緒。
   runner 用到 macOS 專屬的介面（phys_footprint、`sample`、`pmset`、`otool` 等），沒有在其他平台執行過；formal 模式只接受 Apple 原廠 70W 或 140W 變壓器。
 - **規模**：主要結論在 n = 100,000。scaling 只有 (16, 200)；GloVe n = 1,183,514 那一格**沒有主要讀值**（三個 build 都被標記 `background`），300k 的 rust-hnsw 在 0.95 的主要讀值為「未達到」。
+- **文字的 query 是文件，不是問句**：base 與 query 都以 model card 建議的 document 格式 `title: {文章標題} | text: {passage}` 產生 embedding，所以文字 workload 是「以 held-out 文件查詢相近文件」，不是自然語言問句對文件的檢索（[decision 011](docs/decisions/011-datasets.md) §3.4），結論也只代表這個分布（011）。RAG 是以自然語言問句檢索 passage，屬於 query / document 不對稱的 workload，不在 Core 的範圍內（011）。所以文字結果不是 RAG 的實測操作點：同一個 ef 的 recall，以及達到某個 recall 目標所需的 ef 與 QPS，在那裡都可能不同，要另一組問句 workload 才能量。
 - **Gate**：條件 3 依 015 不成立；進入 Advanced C 是專案作者依 SPEC 特例的決定，不代表 Gate 通過。
 - **profiling 只是觀察**：「100 維時 visited set 約占四成」來自取樣 profiler 的歸屬，沒有以介入實驗驗證。rust-hnsw 的距離計算被 inline，無法單獨拆出；FAISS 沒有符號表，只能近似。
 - **Advanced C**：H1 整體無法判定；GloVe 的 seeds 1、4、5 被背景負載標記；C1 在 GloVe 的 F − S 不一致（seed 5）；結論的適用範圍見上一節。
@@ -567,7 +574,7 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 | 兩份 README 與 `docs/results.md` 一致、彼此一致；公開文件的相對連結與錨點都存在，而且不含本機路徑或 email | `tests/test_readme_claims.py` | Python 29 |
 | **合計** | | **Rust 130、Python 711** |
 
-- pytest 實際收集的項目比定義數多（`parametrize`）。最後一次記錄的 `./scripts/test.sh`（019 第一則補記，commit dca22c9）是 pytest 1024 passed、3 skipped，`.venv-embed` 16 passed；之後新增與調整過測試，數量會不同。
+- pytest 實際收集的項目比定義數多（`parametrize`）。最後一次記錄的 `./scripts/test.sh`（NEXT.md 中 2026-10-19 的公開檢查）：工作目錄 pytest 1188 passed、3 skipped；乾淨的 clone 1131 passed、60 skipped，其中 57 個 skip 是需要本機報告的核對。`.venv-embed` 最後一次記錄的是 16 passed（019 第一則補記，commit dca22c9）。乾淨 checkout（沒有本機報告、沒有 `.venv-embed`）目前的數量，見 CI 在 `main` 上最近一次的執行紀錄（頁首的 badge 顯示它）。
 - **會 skip 的情況**：
   - 主 `.venv` 沒有 torch 與 sentence-transformers：`test_embed_text.py` 的 3 個模型測試 skip；`.venv-embed` 的本機快取沒有該 model revision 時也會 skip。
   - 沒有 macOS 的 `sample`：`test_profile_driver.py` 的 2 個測試 skip。
